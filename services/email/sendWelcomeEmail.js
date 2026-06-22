@@ -115,7 +115,7 @@ export const sendWelcomeEmail = async (email, username, userId) => {
   `;
 
   const { data, error } = await resend.emails.send({
-    from: "Sasta Drive <no-reply@sastadrive.in>",
+    from: "Sasta Drive <no-reply@upisathi.in>",
     to: email,
     subject: `Welcome to Sasta Drive, ${username}!`,
     html: html,

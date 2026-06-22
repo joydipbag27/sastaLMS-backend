@@ -26,7 +26,6 @@
     "helmet": "^8.1.0",
     "mongoose": "^8.19.2",
     "prettier": "^3.6.2",
-    "razorpay": "^2.9.6",
     "redis": "^5.10.0",
     "resend": "^6.10.0",
     "zod": "^4.2.1"

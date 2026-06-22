@@ -9,8 +9,6 @@ import {
   registerSchema,
   verifyChangeEmailSchema,
 } from "../validators/authSchema.js";
-import { NOTIFICATION_TYPES } from "../config/notificationTypes.js";
-import { createNotification } from "../services/notificationService.js";
 import { sendWelcomeEmail } from "../services/email/sendWelcomeEmail.js";
 
 //REGISTER
@@ -153,7 +151,7 @@ export const CheckUserName = async (req, res, next) => {
     }
 
     const user = await User.findById(userId)
-      .select("username email role planId bandwidthUsedBytes")
+      .select("username email role")
       .lean();
 
     await redisClient
@@ -276,15 +274,6 @@ export const changePass = async (req, res) => {
       httpOnly: true,
     });
 
-    await createNotification({
-      userId: req.user._id,
-      type: NOTIFICATION_TYPES.PASSWORD_CHANGED,
-      title: "Password changed",
-      message: "Your account password was changed",
-      metadata: {},
-      group: false,
-    });
-
     res.json({ message: "Password changed successfully", success: true });
   } catch (error) {
     res.status(400).json({ error: "Failed to change Password" });
@@ -347,15 +336,6 @@ export const changeEmail = async (req, res) => {
     });
 
     await OTP.deleteOne({ _id: otpInfo._id });
-
-    await createNotification({
-      userId: req.user._id,
-      type: NOTIFICATION_TYPES.EMAIL_CHANGED,
-      title: "Email changed",
-      message: "Your account's email id was changed",
-      metadata: {},
-      group: false,
-    });
 
     return res.status(200).json({
       success: true,

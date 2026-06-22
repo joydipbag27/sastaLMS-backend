@@ -4,9 +4,7 @@ import cors from "cors";
 import userRoutes from "./Routes/userRoutes.js";
 import authRoutes from "./Routes/authRoutes.js";
 import rbacRoutes from "./Routes/rbacRoutes.js";
-import notificationRoutes from "./Routes/notificationRoutes.js";
-import subscriptionRoutes from "./Routes/subscriptionRoutes.js";
-import webhookRoutes from "./Routes/webhookRoutes.js";
+import uploadRoutes from "./Routes/uploadRoutes.js";
 import cookieParser from "cookie-parser";
 import { checkAuth, checkIfBlocked } from "./middlewares/authMiddleware.js";
 import helmet from "helmet";
@@ -38,9 +36,7 @@ app.use(
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", checkAuth, checkIfBlocked, rbacRoutes);
-app.use("/notification", checkAuth, checkIfBlocked, notificationRoutes);
-app.use("/subscription", checkAuth, checkIfBlocked, subscriptionRoutes);
-app.use("/webhook", webhookRoutes);
+app.use("/file", uploadRoutes);
 
 app.use((error, req, res, next) => {
   // ---- Mongoose validation errors ----

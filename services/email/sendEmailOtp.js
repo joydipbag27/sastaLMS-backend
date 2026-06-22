@@ -52,7 +52,7 @@ export const sendEmail = async (email, purpose) => {
 
     try {
       const { data, error } = await resend.emails.send({
-        from: "Sasta Drive <otp@sastadrive.in>",
+        from: "Sasta Drive <otp@upisathi.in>",
         to: email,
         subject: "Your login verification code",
         html: buildTemplate(
