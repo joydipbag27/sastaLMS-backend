@@ -4,7 +4,6 @@ import User from "../Models/userModel.js";
 import { PLANS } from "../config/plans.js";
 import { redisClient } from "../config/redis.js";
 import { razorpayInstance } from "../config/razorpay.js";
-import Directory from "../Models/directoryModel.js";
 import { createNotification } from "../services/notificationService.js";
 import { NOTIFICATION_TYPES } from "../config/notificationTypes.js";
 import { syncUserPlan } from "../utils/syncUserPlan.js";
@@ -282,90 +281,46 @@ export const handleRazorpayWebhook = async (req, res) => {
           return res.status(200).end();
         }
 
-        const rootDirectoryInfo = await Directory.findOne({ userId });
-
-        if (!rootDirectoryInfo) {
-          console.error("error fetching root directory info");
-          return res.status(200).end();
-        }
-
-        if (
-          rootDirectoryInfo.directorySize <= scheduledDowngradePlan.storageBytes
-        ) {
-          let downgradeSubscription;
-          try {
-            downgradeSubscription = await razorpayInstance.subscriptions.create(
-              {
-                plan_id: targetPlanId,
-                total_count:
-                  scheduledDowngradePlan.billingCycle === "monthly" ? 12 : 5,
-                notes: {
-                  userId: userId,
-                },
-              },
-            );
-
-            await Subscription.create({
-              razorpaySubscriptionId: downgradeSubscription.id,
+        let downgradeSubscription;
+        try {
+          downgradeSubscription = await razorpayInstance.subscriptions.create({
+            plan_id: targetPlanId,
+            total_count:
+              scheduledDowngradePlan.billingCycle === "monthly" ? 12 : 5,
+            notes: {
               userId: userId,
+            },
+          });
+
+          await Subscription.create({
+            razorpaySubscriptionId: downgradeSubscription.id,
+            userId: userId,
+            planId: scheduledDowngradePlan.planId,
+            billingCycle: scheduledDowngradePlan.billingCycle,
+            planKey: scheduledDowngradePlan.key,
+          });
+
+          await Subscription.updateOne(
+            { _id: subscription._id },
+            {
+              scheduledDowngradeTo: null,
+            },
+          );
+
+          await createNotification({
+            userId,
+            type: NOTIFICATION_TYPES.PLAN_DOWNGRADED,
+            title: "Plan downgraded",
+            message: `Your plan has been downgraded to ${scheduledDowngradePlan.name}.`,
+            metadata: {
               planId: scheduledDowngradePlan.planId,
               billingCycle: scheduledDowngradePlan.billingCycle,
-              planKey: scheduledDowngradePlan.key,
-            });
+            },
+            group: false,
+          });
+        } catch (error) {
+          console.error("Downgrade subscription failed to create", error);
 
-            await Subscription.updateOne(
-              { _id: subscription._id },
-              {
-                scheduledDowngradeTo: null,
-              },
-            );
-
-            await createNotification({
-              userId,
-              type: NOTIFICATION_TYPES.PLAN_DOWNGRADED,
-              title: "Plan downgraded",
-              message: `Your plan has been downgraded to ${scheduledDowngradePlan.name}.`,
-              metadata: {
-                planId: scheduledDowngradePlan.planId,
-                billingCycle: scheduledDowngradePlan.billingCycle,
-              },
-              group: false,
-            });
-          } catch (error) {
-            console.error("Downgrade subscription failed to create", error);
-
-            await User.findOneAndUpdate(
-              { _id: userId },
-              {
-                bandwidthUsedBytes: 0,
-                bandwidthCycleStart: new Date(),
-              },
-            );
-
-            await syncUserPlan(userId);
-
-            await Subscription.updateOne(
-              { _id: subscription._id },
-              {
-                scheduledDowngradeTo: null,
-              },
-            );
-
-            await createNotification({
-              userId,
-              type: NOTIFICATION_TYPES.SUBSCRIPTION_EXPIRED,
-              title: "Subscription expired",
-              message:
-                "Your subscription has expired and your account has been moved to the free plan.",
-              metadata: {},
-              group: false,
-            });
-          }
-        }
-
-        if (
-          rootDirectoryInfo.directorySize > scheduledDowngradePlan.storageBytes
-        ) {
           await User.findOneAndUpdate(
             { _id: userId },
             {

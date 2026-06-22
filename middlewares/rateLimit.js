@@ -8,5 +8,5 @@ export const customRateLimit = (windowMinute, limit) => {
     legacyHeaders: false,
   });
 
-  return limiter
+  return limiter;
 };

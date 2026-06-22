@@ -116,7 +116,7 @@ export const PLANS = [
     isActive: true,
   },
 
-   {
+  {
     planId: "plan_ShFkp2U3bGn4vd",
     key: "pro_monthly",
     name: "Pro",

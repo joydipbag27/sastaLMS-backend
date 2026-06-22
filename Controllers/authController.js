@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import User from "../Models/userModel.js";
 import { googleClient } from "../services/googleAuthService.js";
 import { sendEmail } from "../services/email/sendEmailOtp.js";
-import Directory from "../Models/directoryModel.js";
 import { redisClient } from "../config/redis.js";
 import { sendOtpSchema } from "../validators/authSchema.js";
 
@@ -38,44 +37,21 @@ export const loginWithGoogle = async (req, res, next) => {
 
   const existingUser = await User.findOne({ email: user.email });
 
-  // CREATE ACCOUNT AND LOGIN
-  const session = await mongoose.startSession();
   if (!existingUser) {
     try {
-      const rootDirId = new mongoose.Types.ObjectId();
       const userId = new mongoose.Types.ObjectId();
 
-      session.startTransaction();
-
-      const newUser = await User.insertOne(
-        {
-          _id: userId,
-          username: user.name,
-          email: user.email,
-          rootDirId,
-        },
-        { session },
-      );
-
-      await Directory.insertOne(
-        {
-          _id: rootDirId,
-          name: `root-${user.email}`,
-          parentDirId: null,
-          userId,
-        },
-        { session },
-      );
-
-      await session.commitTransaction();
-      session.endSession();
+      const newUser = await User.create({
+        _id: userId,
+        username: user.name,
+        email: user.email,
+      });
 
       const sessionId = crypto.randomUUID();
       await redisClient
         .multi()
         .json.set(`session:${sessionId}`, "$", {
           userId: newUser._id,
-          rootDirId: newUser.rootDirId,
           role: newUser.role,
           isBlocked: newUser.isBlocked,
           isPassAvailable: !!newUser.password,
@@ -90,10 +66,6 @@ export const loginWithGoogle = async (req, res, next) => {
         maxAge: 1000 * 60 * 60 * 24 * 7,
       });
     } catch (error) {
-      if (session) {
-        await session.abortTransaction();
-        session.endSession();
-      }
       console.log(error);
       next();
     }
@@ -123,7 +95,6 @@ export const loginWithGoogle = async (req, res, next) => {
         .multi()
         .json.set(`session:${sessionId}`, "$", {
           userId: existingUser._id,
-          rootDirId: existingUser.rootDirId,
           role: existingUser.role,
           isBlocked: existingUser.isBlocked,
           isPassAvailable: !!existingUser.password,

@@ -71,11 +71,3 @@ export const adminWritePrivilegesAuth = async (req, res, next) => {
     return res.status(403).json({ error: "You don't have this permission" });
   }
 };
-
-export const adminFileCRUDPermission = async (req, res, next) => {
-  if (req.user.role === "Admin" || "Owner") {
-    next();
-  } else {
-    return res.status(403).json({ error: "You don't have read privileges" });
-  }
-};

@@ -88,8 +88,8 @@ const subscriptionSchema = new Schema(
     },
     filesDeletedAt: {
       type: Date,
-      default: null
-    }
+      default: null,
+    },
   },
   {
     timestamps: true,

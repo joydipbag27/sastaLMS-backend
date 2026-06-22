@@ -55,6 +55,3 @@ export const permanentlyDeleteMultipleFromB2 = async (keys) => {
     }),
   );
 };
-
-
-

@@ -7,7 +7,7 @@ export const createNotification = async ({
   message,
   metadata = {},
   group = false,
-  incrementBy = 1
+  incrementBy = 1,
 }) => {
   if (group) {
     const since = new Date(Date.now() - 15 * 60 * 1000);
@@ -30,7 +30,7 @@ export const createNotification = async ({
       {
         upsert: true,
         new: true,
-      }
+      },
     );
   }
 

@@ -48,7 +48,7 @@ const notificationSchema = new mongoose.Schema(
 
     count: {
       type: Number,
-      default: 1
+      default: 1,
     },
 
     isRead: {
@@ -62,5 +62,5 @@ const notificationSchema = new mongoose.Schema(
   },
 );
 
-const Notification =  mongoose.model("Notification", notificationSchema);
-export default Notification
+const Notification = mongoose.model("Notification", notificationSchema);
+export default Notification;

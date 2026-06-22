@@ -7,8 +7,6 @@ import {
   SelectPlanSchema,
   UpgradeAndDowngradePlanSchema,
 } from "../validators/authSchema.js";
-import Directory from "../Models/directoryModel.js";
-import { MB } from "../utils/bytes.js";
 import User from "../Models/userModel.js";
 import { redisClient } from "../config/redis.js";
 
@@ -356,19 +354,6 @@ export const downgradePlan = async (req, res) => {
     });
   }
 
-  const rootDirectoryInfo = await Directory.findById(req.user.rootDirId);
-
-  if (!rootDirectoryInfo) {
-    return res.status(400).json({ error: "Errro fetching storage details" });
-  }
-  const consumedStorage = rootDirectoryInfo.directorySize;
-
-  if (consumedStorage > newPlan.storageBytes) {
-    return res.status(400).json({
-      error: `You are currently using ${consumedStorage / MB} MB. Please reduce usage below ${newPlan.storageBytes / MB} before downgrading`,
-    });
-  }
-
   try {
     if (!activeSub.cancelAtPeriodEnd) {
       await razorpayInstance.subscriptions.cancel(
@@ -423,7 +408,7 @@ export const getInvoice = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch invoices" });
   }
 };
- 
+
 export const dummyActivateSubscription = async (req, res) => {
   const { success, data, error } = SelectPlanSchema.safeParse(req.body);
 

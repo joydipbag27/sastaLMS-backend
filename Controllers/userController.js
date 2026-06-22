@@ -1,5 +1,4 @@
 import User from "../Models/userModel.js";
-import Directory from "../Models/directoryModel.js";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import OTP from "../Models/otpModel.js";
@@ -34,44 +33,20 @@ export const Register = async (req, res, next) => {
   const hashedPassword = await bcrypt.hash(password, 11);
 
   try {
-    const rootDirId = new mongoose.Types.ObjectId();
     const userId = new mongoose.Types.ObjectId();
 
-    session.startTransaction();
-
-    await User.insertOne(
-      {
-        _id: userId,
-        username,
-        email,
-        password: hashedPassword,
-        rootDirId,
-      },
-      { session },
-    );
-
-    await Directory.insertOne(
-      {
-        _id: rootDirId,
-        name: `root-${email}`,
-        parentDirId: null,
-        userId,
-      },
-      { session },
-    );
-
-    await session.commitTransaction();
-    session.endSession();
+    await User.create({
+      _id: userId,
+      username,
+      email,
+      password: hashedPassword,
+    });
 
     await sendWelcomeEmail(email, username, userId.toString());
 
     await isOtpAvailable.deleteOne();
     res.status(201).json({ message: "User Registered" });
   } catch (error) {
-    if (session) {
-      await session.abortTransaction();
-      session.endSession();
-    }
     if (error.code === 121) {
       res.status(400).json({ error: "Invalid fields" });
       console.error("Registration error:", JSON.stringify(error, null, 2));
@@ -181,20 +156,18 @@ export const CheckUserName = async (req, res, next) => {
       .select("username email role planId bandwidthUsedBytes")
       .lean();
 
-    const rootDir = await Directory.findById(req.user.rootDirId);
-
     await redisClient
       .multi()
       .json.set(redisKey, "$", user)
       .json.set(redisKey, "$.isPassAvailable", isPassAvailable)
-      .json.set(redisKey, "$.usedSpaceInBytes", rootDir?.directorySize)
+      .json.set(redisKey, "$.usedSpaceInBytes", 0)
       .expire(redisKey, 600)
       .exec();
 
     const response = {
       ...user,
       isPassAvailable,
-      usedSpaceInBytes: rootDir?.directorySize ?? 0,
+      usedSpaceInBytes: 0,
     };
 
     res.status(200).json(response);
@@ -371,10 +344,6 @@ export const changeEmail = async (req, res) => {
 
     await User.findByIdAndUpdate(req.user._id, {
       $set: { email: newEmail },
-    });
-
-    await Directory.findByIdAndUpdate(req.user.rootDirId, {
-      $set: { name: `root-${newEmail}` },
     });
 
     await OTP.deleteOne({ _id: otpInfo._id });

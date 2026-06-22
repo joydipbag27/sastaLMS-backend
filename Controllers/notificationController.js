@@ -39,7 +39,7 @@ export const markAsRead = async (req, res) => {
       {
         _id: id,
         userId: req.user._id,
-        isRead: false
+        isRead: false,
       },
       { isRead: true },
     );
@@ -55,7 +55,7 @@ export const markAllAsRead = async (req, res) => {
     await Notification.updateMany(
       {
         userId: req.user._id,
-        isRead: false
+        isRead: false,
       },
       { isRead: true },
     );
