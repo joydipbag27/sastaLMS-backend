@@ -29,8 +29,8 @@ const lessonSchema = new mongoose.Schema(
     },
 
     video: {
-      type: String,
-      required: true,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Media",
     },
 
     duration: {

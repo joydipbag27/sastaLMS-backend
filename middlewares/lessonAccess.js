@@ -12,7 +12,7 @@ export const checkLessonAccess = async (req, res, next) => {
     const { id: lessonId } = req.params;
 
     // 2. Fetch the lesson
-    const lesson = await Lesson.findById(lessonId);
+    const lesson = await Lesson.findById(lessonId).populate("video");
     if (!lesson) {
       return res.status(404).json({ error: "Lesson not found" });
     }

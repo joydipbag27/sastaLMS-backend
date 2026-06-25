@@ -1,8 +1,10 @@
 import Section from "../Models/sectionModel.js";
 import Course from "../Models/courseModel.js";
 import Lesson from "../Models/lessonModel.js";
+import Media from "../Models/mediaModel.js";
 import { createSectionSchema, updateSectionSchema } from "../validators/sectionSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
 
 // CREATE SECTION
 export const createSection = async (req, res) => {
@@ -98,6 +100,16 @@ export const deleteSection = async (req, res) => {
 
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this section");
+    }
+
+    // Cascade-delete associated Media from B2 and MongoDB
+    const lessons = await Lesson.find({ section: id }).select("video").lean();
+    const mediaIds = lessons.map((l) => l.video).filter(Boolean);
+    if (mediaIds.length > 0) {
+      const mediaRecords = await Media.find({ _id: { $in: mediaIds } }).lean();
+      const storageKeys = mediaRecords.map((m) => m.storageKey);
+      if (storageKeys.length > 0) await permanentlyDeleteMultipleFromB2(storageKeys);
+      await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
     await Lesson.deleteMany({ section: id });

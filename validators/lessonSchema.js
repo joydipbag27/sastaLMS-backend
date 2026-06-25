@@ -19,8 +19,8 @@ export const createLessonSchema = z.object({
     .regex(/^[a-f\d]{24}$/i, "Invalid section ID"),
   video: z
     .string()
-    .trim()
-    .min(1, "Video link is required"),
+    .regex(/^[a-f\d]{24}$/i, "Invalid media ID")
+    .optional(),
   duration: z.coerce
     .number()
     .nonnegative("Duration must be a positive number or zero")

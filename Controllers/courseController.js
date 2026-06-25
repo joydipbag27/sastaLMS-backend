@@ -1,8 +1,10 @@
 import Course from "../Models/courseModel.js";
 import Section from "../Models/sectionModel.js";
 import Lesson from "../Models/lessonModel.js";
+import Media from "../Models/mediaModel.js";
 import { createCourseSchema, updateCourseSchema } from "../validators/courseSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
 
 // CREATE COURSE
 export const createCourse = async (req, res) => {
@@ -98,7 +100,7 @@ export const getCourseDetails = async (req, res) => {
     if (!course) return errorResponse(res, 404, "Course not found");
 
     const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
-    const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).lean();
+    const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).populate("video").lean();
 
     const lessonsBySection = {};
     for (const lesson of lessons) {
@@ -152,6 +154,16 @@ export const deleteCourse = async (req, res) => {
 
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this course");
+    }
+
+    // Cascade-delete associated Media from B2 and MongoDB
+    const lessons = await Lesson.find({ course: id }).select("video").lean();
+    const mediaIds = lessons.map((l) => l.video).filter(Boolean);
+    if (mediaIds.length > 0) {
+      const mediaRecords = await Media.find({ _id: { $in: mediaIds } }).lean();
+      const storageKeys = mediaRecords.map((m) => m.storageKey);
+      if (storageKeys.length > 0) await permanentlyDeleteMultipleFromB2(storageKeys);
+      await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
     await Lesson.deleteMany({ course: id });

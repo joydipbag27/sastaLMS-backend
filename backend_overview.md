@@ -103,6 +103,13 @@ This logic applies to:
 - `GET /lesson/:id` — via `checkLessonAccess` middleware.
 - `GET /lesson/section/:sectionId` — inline access control in the controller, using `optionalAuthenticate` to handle both logged-in and logged-out users gracefully.
 
+### 🖼️ Media Management
+- **Media** is a standalone, reusable module that tracks uploaded-file metadata. It has no knowledge of lessons, courses, or sections — business models reference Media documents.
+- **Upload flow**: Backend generates a presigned PUT URL + unique `storageKey`. The frontend uploads directly to Backblaze B2. After success, the frontend calls `confirm-upload` to confirm the upload.
+- **Robust Verification**: When confirming, the backend queries B2/S3 using `HeadObjectCommand` to verify the file exists on the storage server and that its actual size matches the claimed size. If verification fails, the B2 object is cleaned up, database creation is aborted, and a `400` error is returned.
+- **Download flow**: Backend generates a presigned GET URL on-the-fly from the stored `storageKey`. The URL is never persisted in MongoDB.
+- **Deletion**: Only the original uploader or an ADMIN may delete. Deletes the object from B2 (including all versions/markers) and removes the Media document.
+
 ### 📦 File Storage (Backblaze B2)
 - Generate **pre-signed upload URLs** so clients upload directly to B2, not through the server.
 - Generate **pre-signed download URLs** for secure, time-limited file access.
@@ -114,7 +121,7 @@ This logic applies to:
 
 | Service | Purpose | Config File |
 |---|---|---|
-| **MongoDB** | Primary database (users, courses, sections, lessons, OTPs, enrollments) | `config/db.js` |
+| **MongoDB** | Primary database (users, courses, sections, lessons, media, OTPs, enrollments) | `config/db.js` |
 | **Redis** | Session storage, FT search index for logout-all-devices | `config/redis.js`, `config/redisSetup.js` |
 | **Backblaze B2** | S3-compatible object storage for course media | `config/s3Client.js` |
 | **Resend** | Transactional email (OTPs, password resets) | Used in `authController.js` / `userController.js` |
@@ -160,7 +167,7 @@ This logic applies to:
 | `description` | String | Optional |
 | `course` | ObjectId → Course | Required, indexed |
 | `section` | ObjectId → Section | Required, indexed |
-| `video` | String | S3 key, required |
+| `video` | ObjectId → Media | Required, references a Media document |
 | `duration` | Number | Seconds, default `0` |
 | `isPreview` | Boolean | Default `false` |
 | `order` | Number | Required; unique within section |
@@ -174,6 +181,17 @@ This logic applies to:
 | `enrolledAt` | Date | Default `Date.now` |
 
 > Compound unique index on `{ user, course }` prevents duplicate enrollments.
+
+### `Media`
+| Field | Type | Notes |
+|---|---|---|
+| `uploadedBy` | ObjectId → User | Required, indexed |
+| `storageKey` | String | Required, unique |
+| `mimeType` | String | Required |
+| `size` | Number | Bytes, required |
+| `status` | String | `UPLOADING` \| `READY` \| `FAILED`, default `UPLOADING` |
+
+> Media is a standalone entity. It does **not** store `lessonId`, `courseId`, or `sectionId`. Business models (Course, Lesson) reference Media documents.
 
 ### `OTP`
 Stores short-lived OTPs for email verification and password resets (TTL-managed).
@@ -296,6 +314,17 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `GET` | `/lesson/:id` | 🔑 + `checkLessonAccess` | — | Get a lesson (strictly access-controlled by Admin → Creator → Preview → Enrolled chain) |
 | `PATCH` | `/lesson/:id` | 🔑🛡️ | 10/min | Update a lesson (order conflict check on change) |
 | `DELETE` | `/lesson/:id` | 🔑🛡️ | 10/min | Delete a lesson |
+
+---
+
+### Media Routes — `/media`
+
+| Method | Path | Auth | Rate Limit | Description |
+|---|---|---|---|---|
+| `POST` | `/media/upload-url` | 🔑 | 15/min | Generate a presigned PUT URL + unique `storageKey` for direct B2 upload |
+| `POST` | `/media/confirm-upload` | 🔑 | 15/min | Create a Media document after successful upload (`status: READY`) |
+| `GET` | `/media/:id/download` | 🔑 | 30/min | Generate a presigned GET URL for a media file |
+| `DELETE` | `/media/:id` | 🔑 | 10/min | Delete media from B2 + MongoDB (uploader or ADMIN only) |
 
 ---
 

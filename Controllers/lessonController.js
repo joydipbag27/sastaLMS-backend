@@ -1,9 +1,11 @@
 import Lesson from "../Models/lessonModel.js";
 import Section from "../Models/sectionModel.js";
 import Course from "../Models/courseModel.js";
+import Media from "../Models/mediaModel.js";
 import Enrollment from "../Models/enrollmentModel.js";
 import { createLessonSchema, updateLessonSchema } from "../validators/lessonSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
 
 // CREATE LESSON
 export const createLesson = async (req, res) => {
@@ -27,6 +29,12 @@ export const createLesson = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
+    if (video) {
+      const media = await Media.findById(video);
+      if (!media) return errorResponse(res, 404, "Media not found");
+      if (media.status !== "READY") return errorResponse(res, 400, "Media is not ready");
+    }
+
     const orderConflict = await Lesson.findOne({ section, order });
     if (orderConflict) return errorResponse(res, 409, `A lesson with order ${order} already exists in this section`);
 
@@ -46,7 +54,7 @@ export const getLessonsBySection = async (req, res) => {
     const section = await Section.findById(sectionId);
     if (!section) return errorResponse(res, 404, "Section not found");
 
-    const allLessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).lean();
+    const allLessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).populate("video").lean();
     const user = req.user;
 
     // Admin: full access
@@ -98,7 +106,7 @@ export const updateLesson = async (req, res) => {
     const { success, data, error } = updateLessonSchema.safeParse(req.body);
     if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-    const lesson = await Lesson.findById(id);
+    const lesson = await Lesson.findById(id).populate("video");
     if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     const course = await Course.findById(lesson.course);
@@ -106,6 +114,12 @@ export const updateLesson = async (req, res) => {
 
     if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    }
+
+    if (data.video) {
+      const media = await Media.findById(data.video);
+      if (!media) return errorResponse(res, 404, "Media not found");
+      if (media.status !== "READY") return errorResponse(res, 400, "Media is not ready");
     }
 
     if (data.order !== undefined && data.order !== lesson.order) {
@@ -136,6 +150,15 @@ export const deleteLesson = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this lesson");
     }
 
+    // Delete associated Media from B2 and MongoDB
+    if (lesson.video) {
+      const media = await Media.findById(lesson.video);
+      if (media) {
+        await permanentlyDeleteMultipleFromB2([media.storageKey]);
+        await media.deleteOne();
+      }
+    }
+
     await lesson.deleteOne();
     return successResponse(res, 200, "Lesson deleted successfully");
   } catch (err) {
@@ -158,7 +181,7 @@ export const getMyLessonsBySection = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to view lessons for this section");
     }
 
-    const lessons = await Lesson.find({ section: sectionId }).sort({ order: 1 });
+    const lessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).populate("video");
     return successResponse(res, 200, "Lessons fetched", { lessons });
   } catch (err) {
     console.error("[getMyLessonsBySection] Unexpected error:", err);
@@ -170,7 +193,7 @@ export const getMyLessonsBySection = async (req, res) => {
 export const getMyLessonById = async (req, res) => {
   try {
     const { id } = req.params;
-    const lesson = await Lesson.findById(id);
+    const lesson = await Lesson.findById(id).populate("video");
     if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     const course = await Course.findById(lesson.course);
