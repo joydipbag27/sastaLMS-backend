@@ -2,19 +2,29 @@ import Course from "../Models/courseModel.js";
 import Section from "../Models/sectionModel.js";
 import Lesson from "../Models/lessonModel.js";
 import Media from "../Models/mediaModel.js";
-import { createCourseSchema, updateCourseSchema } from "../validators/courseSchema.js";
+import {
+  createCourseSchema,
+  updateCourseSchema,
+  thumbnailUploadUrlSchema,
+  confirmThumbnailSchema,
+} from "../validators/courseSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
+import {
+  generateThumbnailUploadUrl,
+  deleteThumbnailFromS3,
+  getThumbnailMetadata,
+} from "../config/awsS3Client.js";
 
 // CREATE COURSE
 export const createCourse = async (req, res) => {
   const { success, data, error } = createCourseSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, thumbnailUrl, price, category, level, status } = data;
+  const { title, description, price, category, level, status } = data;
   try {
     const newCourse = await Course.create({
-      title, description, thumbnailUrl,
+      title, description,
       creator: req.user._id,
       price, category, level,
       status: "Draft",
@@ -41,7 +51,7 @@ export const getCourses = async (req, res) => {
     if (level) query.level = level;
     if (cursor) query._id = { $lt: cursor };
 
-    const courses = await Course.find(query).sort({ _id: -1 }).limit(limit + 1);
+    const courses = await Course.find(query).populate("thumbnail").sort({ _id: -1 }).limit(limit + 1);
     const hasNextPage = courses.length > limit;
     const data = hasNextPage ? courses.slice(0, limit) : courses;
     const nextCursor = hasNextPage ? data[data.length - 1]._id : null;
@@ -66,7 +76,7 @@ export const getMyCourses = async (req, res) => {
     }
     if (cursor) query._id = { $lt: cursor };
 
-    const courses = await Course.find(query).sort({ _id: -1 }).limit(limit + 1);
+    const courses = await Course.find(query).populate("thumbnail").sort({ _id: -1 }).limit(limit + 1);
     const hasNextPage = courses.length > limit;
     const data = hasNextPage ? courses.slice(0, limit) : courses;
     const nextCursor = hasNextPage ? data[data.length - 1]._id : null;
@@ -82,7 +92,7 @@ export const getMyCourses = async (req, res) => {
 export const getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
-    const course = await Course.findById(id).populate("creator", "username email");
+    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
     if (!course) return errorResponse(res, 404, "Course not found");
     return successResponse(res, 200, "Course fetched", { course });
   } catch (err) {
@@ -96,7 +106,7 @@ export const getCourseDetails = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const course = await Course.findById(id).populate("creator", "username email");
+    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
     if (!course) return errorResponse(res, 404, "Course not found");
 
     const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
@@ -243,6 +253,12 @@ export const deleteCourse = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this course");
     }
 
+    // Cascade-delete associated thumbnail (if any) from S3 and MongoDB
+    if (course.thumbnail) {
+      await deleteThumbnailFromS3(course.thumbnail.toString());
+      await Media.findByIdAndDelete(course.thumbnail);
+    }
+
     // Cascade-delete associated Media (videos) from B2 and MongoDB
     const lessons = await Lesson.find({ course: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
@@ -262,4 +278,163 @@ export const deleteCourse = async (req, res) => {
     return errorResponse(res, 500, "Failed to delete course");
   }
 };
+
+// GET THUMBNAIL UPLOAD URL
+export const getThumbnailUploadUrl = async (req, res) => {
+  const { id } = req.params;
+  const { success, data, error } = thumbnailUploadUrlSchema.safeParse(req.body);
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
+
+  const { mimeType } = data;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to modify this course");
+    }
+
+    // Create a Media document in DB with UPLOADING status, type THUMBNAIL, storageProvider AWS_S3
+    const media = await Media.create({
+      uploadedBy: req.user._id,
+      mimeType,
+      size: 0,
+      status: "UPLOADING",
+      type: "THUMBNAIL",
+      storageProvider: "AWS_S3",
+    });
+
+    const mediaId = media._id.toString();
+
+    // Generate AWS S3 presigned PUT URL using the mediaId as key
+    const { uploadUrl } = await generateThumbnailUploadUrl(mediaId, mimeType);
+
+    return successResponse(res, 200, "Upload URL generated successfully", {
+      uploadUrl,
+      mediaId,
+    });
+  } catch (err) {
+    console.error("[getThumbnailUploadUrl] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to generate upload URL");
+  }
+};
+
+// CONFIRM THUMBNAIL
+export const confirmThumbnail = async (req, res) => {
+  const { id } = req.params;
+  const { success, data, error } = confirmThumbnailSchema.safeParse(req.body);
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
+
+  const { mediaId } = data;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to modify this course");
+    }
+
+    const media = await Media.findById(mediaId);
+    if (!media) return errorResponse(res, 404, "Media document not found");
+
+    if (media.uploadedBy.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to confirm this media");
+    }
+
+    if (media.status !== "UPLOADING") {
+      return errorResponse(res, 400, "Media is not in UPLOADING status");
+    }
+
+    // Call S3 to check object existence and properties
+    let metadata;
+    try {
+      metadata = await getThumbnailMetadata(mediaId);
+    } catch (err) {
+      console.error("[confirmThumbnail] File lookup failed on S3. Cleaning up:", err);
+      await deleteThumbnailFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "File does not exist on storage");
+    }
+
+    // Verify size limit: 2 MB maximum
+    const maxLimit = 2 * 1024 * 1024;
+    if (metadata.contentLength > maxLimit) {
+      console.error(`[confirmThumbnail] Size limit exceeded: ${metadata.contentLength} bytes`);
+      await deleteThumbnailFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "File size exceeds the 2 MB maximum limit");
+    }
+
+    // Verify contentType is allowed
+    const allowedMimeTypes = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowedMimeTypes.includes(metadata.contentType)) {
+      console.error(`[confirmThumbnail] Mime type not allowed: ${metadata.contentType}`);
+      await deleteThumbnailFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "Invalid image format on storage");
+    }
+
+    // Update Media fields
+    media.size = metadata.contentLength;
+    media.mimeType = metadata.contentType;
+    media.status = "READY";
+    await media.save();
+
+    // Associate media with course & clean up old media/S3 object if replacement occurs
+    const previousThumbnailId = course.thumbnail;
+    course.thumbnail = media._id;
+    await course.save();
+
+    if (previousThumbnailId && previousThumbnailId.toString() !== media._id.toString()) {
+      const oldMedia = await Media.findById(previousThumbnailId);
+      if (oldMedia) {
+        await deleteThumbnailFromS3(previousThumbnailId.toString());
+        await oldMedia.deleteOne();
+      }
+    }
+
+    const updatedCourse = await Course.findById(id).populate("thumbnail").populate("creator", "username email");
+    return successResponse(res, 200, "Thumbnail upload confirmed successfully", { course: updatedCourse });
+  } catch (err) {
+    console.error("[confirmThumbnail] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to confirm thumbnail upload");
+  }
+};
+
+// DELETE THUMBNAIL
+export const deleteThumbnail = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to delete this thumbnail");
+    }
+
+    const thumbnailId = course.thumbnail;
+    if (!thumbnailId) {
+      return successResponse(res, 200, "Course has no thumbnail to delete");
+    }
+
+    // Delete S3 object
+    await deleteThumbnailFromS3(thumbnailId.toString());
+
+    // Delete Media document
+    await Media.findByIdAndDelete(thumbnailId);
+
+    // Set course.thumbnail = null
+    course.thumbnail = null;
+    await course.save();
+
+    return successResponse(res, 200, "Thumbnail deleted successfully");
+  } catch (err) {
+    console.error("[deleteThumbnail] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to delete thumbnail");
+  }
+};
+
 

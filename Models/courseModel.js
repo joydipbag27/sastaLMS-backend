@@ -14,14 +14,15 @@ const courseSchema = new mongoose.Schema(
       trim: true,
     },
 
-    thumbnailUrl: {
-      type: String,
-    },
-
     creator: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+
+    thumbnail: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Media",
     },
 
     price: {
@@ -48,8 +49,16 @@ const courseSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
+
+courseSchema.virtual("thumbnailUrl").get(function () {
+  if (!this.thumbnail) return undefined;
+  const mediaId = this.thumbnail._id ? this.thumbnail._id.toString() : this.thumbnail.toString();
+  return `https://${process.env.AWS_THUMBNAIL_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/course-thumbnails/${mediaId}`;
+});
 
 const Course = mongoose.model("Course", courseSchema);
 export default Course;

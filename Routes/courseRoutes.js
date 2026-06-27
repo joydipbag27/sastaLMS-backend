@@ -9,6 +9,9 @@ import {
   unpublishCourse,
   deleteCourse,
   getCourseDetails,
+  getThumbnailUploadUrl,
+  confirmThumbnail,
+  deleteThumbnail,
 } from "../Controllers/courseController.js";
 import { enrollInCourse, getMyEnrollments, getEnrollmentByCourseId } from "../Controllers/enrollmentController.js";
 import { authenticate } from "../middlewares/authenticate.js";
@@ -52,6 +55,30 @@ router.get(
   "/:id/enrollment",
   authenticate,
   getEnrollmentByCourseId,
+);
+
+router.post(
+  "/:id/thumbnail/upload-url",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getThumbnailUploadUrl,
+);
+
+router.post(
+  "/:id/thumbnail/confirm",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  confirmThumbnail,
+);
+
+router.delete(
+  "/:id/thumbnail",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  deleteThumbnail,
 );
 
 router.post(

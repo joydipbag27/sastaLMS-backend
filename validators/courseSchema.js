@@ -10,11 +10,6 @@ export const createCourseSchema = z.object({
     .string()
     .trim()
     .min(10, "Description must be at least 10 characters"),
-  thumbnailUrl: z
-    .string()
-    .url("Invalid thumbnail URL")
-    .optional()
-    .or(z.literal("")),
   price: z.coerce
     .number()
     .nonnegative("Price must be a positive number or zero")
@@ -25,4 +20,15 @@ export const createCourseSchema = z.object({
 });
 
 export const updateCourseSchema = createCourseSchema.omit({ status: true }).partial();
+
+export const thumbnailUploadUrlSchema = z.object({
+  mimeType: z.enum(
+    ["image/png", "image/jpeg", "image/webp"],
+    { errorMap: () => ({ message: "Only image/png, image/jpeg, and image/webp are allowed" }) }
+  ),
+});
+
+export const confirmThumbnailSchema = z.object({
+  mediaId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid media ID"),
+});
 

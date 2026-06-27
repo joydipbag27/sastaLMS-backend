@@ -25,6 +25,20 @@ const mediaSchema = new mongoose.Schema(
       enum: ["UPLOADING", "READY", "FAILED"],
       default: "UPLOADING",
     },
+
+    type: {
+      type: String,
+      enum: ["VIDEO", "THUMBNAIL"],
+      default: "VIDEO",
+      required: true,
+    },
+
+    storageProvider: {
+      type: String,
+      enum: ["BACKBLAZE", "AWS_S3"],
+      default: "BACKBLAZE",
+      required: true,
+    },
   },
   {
     timestamps: true,

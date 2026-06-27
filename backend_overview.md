@@ -151,8 +151,8 @@ This logic applies to:
 |---|---|---|
 | `title` | String | Required |
 | `description` | String | Required |
-| `thumbnail` | String | S3 key |
 | `creator` | ObjectId → User | Required |
+| `thumbnail` | ObjectId → Media | References a Media document representing the course thumbnail |
 | `price` | Number | Default `0` |
 | `category` | String | Required |
 | `level` | String | `Beginner` \| `Intermediate` \| `Advanced` |
@@ -191,13 +191,15 @@ This logic applies to:
 ### `Media`
 | Field | Type | Notes |
 |---|---|---|
-| `_id` | ObjectId | Auto-generated. Also used as the B2 object key (via `.toString()`) |
+| `_id` | ObjectId | Auto-generated. Used as the object key (via `.toString()`) for the storage provider |
 | `uploadedBy` | ObjectId → User | Required, indexed |
 | `mimeType` | String | Required |
 | `size` | Number | Bytes, required |
 | `status` | String | `UPLOADING` \| `READY` \| `FAILED`, default `UPLOADING` |
+| `type` | String | `VIDEO` \| `THUMBNAIL`, default `VIDEO` |
+| `storageProvider` | String | `BACKBLAZE` \| `AWS_S3`, default `BACKBLAZE` |
 
-> Media is a standalone entity. It does **not** store `lessonId`, `courseId`, or `sectionId`. Business models (Lesson) reference Media documents. The `_id` serves double duty as the B2 storage key.
+> Media is the application's universal uploaded asset model. Business models (Course, Lesson) reference Media documents. The `_id` serves as the storage key for both Backblaze B2 (videos) and AWS S3 (thumbnails).
 
 ### `OTP`
 Stores short-lived OTPs for email verification and password resets (TTL-managed).
@@ -277,6 +279,9 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `GET` | `/course/creator/me` | 🔑🛡️ | — | List creator's own courses. Supports `?status=Draft\|Published\|All` |
 | `GET` | `/course/:id` | 🔓 | — | Get a single course by ID |
 | `GET` | `/course/:id/details` | 👁️ | — | Get full structured course details: course + sections + lessons (video field stripped for non-creators) |
+| `POST` | `/course/:id/thumbnail/upload-url` | 🔑🛡️ | 10/min | Generate a presigned AWS S3 upload URL + draft Media asset for the course thumbnail |
+| `POST` | `/course/:id/thumbnail/confirm` | 🔑🛡️ | 10/min | Confirm and verify thumbnail upload on AWS S3 (HeadObject + 2MB limit), link to course |
+| `DELETE` | `/course/:id/thumbnail` | 🔑🛡️ | 10/min | Delete thumbnail from AWS S3, remove Media document, clear Course association |
 | `POST` | `/course/:id/enroll` | 🔑 | 10/min | Enroll the current user in a published course |
 | `GET` | `/course/enrollments/me` | 🔑 | — | Get all enrollments of the current logged-in user |
 | `GET` | `/course/:id/enrollment` | 🔑 | — | Get a single enrollment of the current user using course ID |
