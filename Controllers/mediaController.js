@@ -1,12 +1,32 @@
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import fs from "fs/promises";
+import path from "path";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { s3Client, permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
-import { awsS3Client, generateVideoUploadUrlS3, deleteVideoFromS3, getVideoMetadataFromS3 } from "../config/awsS3Client.js";
+import {
+  s3Client,
+  permanentlyDeleteMultipleFromB2,
+} from "../config/s3Client.js";
+import {
+  awsS3Client,
+  generateVideoUploadUrlS3,
+  deleteVideoFromS3,
+  getVideoMetadataFromS3,
+} from "../config/awsS3Client.js";
 import Media from "../Models/mediaModel.js";
 import Course from "../Models/courseModel.js";
 import Lesson from "../Models/lessonModel.js";
-import { uploadUrlSchema, confirmUploadSchema } from "../validators/mediaSchema.js";
+import {
+  uploadUrlSchema,
+  confirmUploadSchema,
+  uploadCompleteSchema,
+  mediaProcessingCompleteSchema,
+} from "../validators/mediaSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+import { createJob } from "../services/mediaConvertService.js";
 
 // POST /media/lesson/:lessonId/upload-url
 export const getLessonVideoUploadUrl = async (req, res) => {
@@ -25,8 +45,15 @@ export const getLessonVideoUploadUrl = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     // Create a draft Media document — its _id becomes the B2 key
@@ -45,11 +72,19 @@ export const getLessonVideoUploadUrl = async (req, res) => {
       ContentType: data.mimeType,
     });
 
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const uploadUrl = await getSignedUrl(s3Client, command, {
+      expiresIn: 3600,
+    });
 
-    return successResponse(res, 200, "Upload URL generated", { uploadUrl, mediaId: key });
+    return successResponse(res, 200, "Upload URL generated", {
+      uploadUrl,
+      mediaId: key,
+    });
   } catch (err) {
-    console.error("[getLessonVideoUploadUrl] Failed to generate presigned PUT URL:", err);
+    console.error(
+      "[getLessonVideoUploadUrl] Failed to generate presigned PUT URL:",
+      err,
+    );
     return errorResponse(res, 500, "Failed to generate upload URL");
   }
 };
@@ -65,7 +100,11 @@ export const getLessonVideoReplaceUrl = async (req, res) => {
     if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     if (!lesson.video) {
-      return errorResponse(res, 400, "Lesson does not have a video to replace. Use the upload endpoint instead.");
+      return errorResponse(
+        res,
+        400,
+        "Lesson does not have a video to replace. Use the upload endpoint instead.",
+      );
     }
 
     const oldMediaId = lesson.video;
@@ -80,8 +119,15 @@ export const getLessonVideoReplaceUrl = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     // Create a draft Media document — its _id becomes the B2 key
@@ -100,11 +146,19 @@ export const getLessonVideoReplaceUrl = async (req, res) => {
       ContentType: data.mimeType,
     });
 
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const uploadUrl = await getSignedUrl(s3Client, command, {
+      expiresIn: 3600,
+    });
 
-    return successResponse(res, 200, "Replace URL generated", { uploadUrl, mediaId: key });
+    return successResponse(res, 200, "Replace URL generated", {
+      uploadUrl,
+      mediaId: key,
+    });
   } catch (err) {
-    console.error("[getLessonVideoReplaceUrl] Failed to generate presigned PUT URL:", err);
+    console.error(
+      "[getLessonVideoReplaceUrl] Failed to generate presigned PUT URL:",
+      err,
+    );
     return errorResponse(res, 500, "Failed to generate replace URL");
   }
 };
@@ -122,8 +176,15 @@ export const confirmLessonVideoUpload = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     const media = await Media.findById(data.mediaId);
@@ -141,13 +202,18 @@ export const confirmLessonVideoUpload = async (req, res) => {
     try {
       s3Data = await s3Client.send(headCommand);
     } catch (err) {
-      console.error("[confirmLessonVideoUpload] File lookup failed on B2. Cleaning up:", err);
+      console.error(
+        "[confirmLessonVideoUpload] File lookup failed on B2. Cleaning up:",
+        err,
+      );
       await media.deleteOne();
       return errorResponse(res, 400, "File does not exist on storage");
     }
 
     if (s3Data.ContentLength !== data.size) {
-      console.error(`[confirmLessonVideoUpload] File size mismatch: expected ${data.size}, got ${s3Data.ContentLength}`);
+      console.error(
+        `[confirmLessonVideoUpload] File size mismatch: expected ${data.size}, got ${s3Data.ContentLength}`,
+      );
       await permanentlyDeleteMultipleFromB2([key]);
       await media.deleteOne();
       return errorResponse(res, 400, "File size mismatch on storage");
@@ -172,7 +238,12 @@ export const confirmLessonVideoUpload = async (req, res) => {
     }
 
     const updatedLesson = await Lesson.findById(lessonId).populate("video");
-    return successResponse(res, 200, "Lesson video upload confirmed and associated successfully", { lesson: updatedLesson, media });
+    return successResponse(
+      res,
+      200,
+      "Lesson video upload confirmed and associated successfully",
+      { lesson: updatedLesson, media },
+    );
   } catch (err) {
     console.error("[confirmLessonVideoUpload] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to confirm upload");
@@ -196,8 +267,15 @@ export const getLessonVideoUploadUrlS3 = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     // Create a draft Media document — its _id becomes the S3 key
@@ -215,9 +293,15 @@ export const getLessonVideoUploadUrlS3 = async (req, res) => {
     // Generate AWS S3 presigned PUT URL
     const { uploadUrl } = await generateVideoUploadUrlS3(key, data.mimeType);
 
-    return successResponse(res, 200, "Upload URL generated", { uploadUrl, mediaId: key });
+    return successResponse(res, 200, "Upload URL generated", {
+      uploadUrl,
+      mediaId: key,
+    });
   } catch (err) {
-    console.error("[getLessonVideoUploadUrlS3] Failed to generate presigned PUT URL:", err);
+    console.error(
+      "[getLessonVideoUploadUrlS3] Failed to generate presigned PUT URL:",
+      err,
+    );
     return errorResponse(res, 500, "Failed to generate upload URL");
   }
 };
@@ -233,7 +317,11 @@ export const getLessonVideoReplaceUrlS3 = async (req, res) => {
     if (!lesson) return errorResponse(res, 404, "Lesson not found");
 
     if (!lesson.video) {
-      return errorResponse(res, 400, "Lesson does not have a video to replace. Use the upload endpoint instead.");
+      return errorResponse(
+        res,
+        400,
+        "Lesson does not have a video to replace. Use the upload endpoint instead.",
+      );
     }
 
     const oldMediaId = lesson.video;
@@ -252,8 +340,15 @@ export const getLessonVideoReplaceUrlS3 = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     // Create a draft Media document — its _id becomes the S3 key
@@ -271,9 +366,15 @@ export const getLessonVideoReplaceUrlS3 = async (req, res) => {
     // Generate AWS S3 presigned PUT URL
     const { uploadUrl } = await generateVideoUploadUrlS3(key, data.mimeType);
 
-    return successResponse(res, 200, "Replace URL generated", { uploadUrl, mediaId: key });
+    return successResponse(res, 200, "Replace URL generated", {
+      uploadUrl,
+      mediaId: key,
+    });
   } catch (err) {
-    console.error("[getLessonVideoReplaceUrlS3] Failed to generate presigned PUT URL:", err);
+    console.error(
+      "[getLessonVideoReplaceUrlS3] Failed to generate presigned PUT URL:",
+      err,
+    );
     return errorResponse(res, 500, "Failed to generate replace URL");
   }
 };
@@ -291,8 +392,15 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
-      return errorResponse(res, 403, "You do not have permission to modify this lesson");
+    if (
+      req.user.role !== "ADMIN" &&
+      course.creator.toString() !== req.user._id.toString()
+    ) {
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to modify this lesson",
+      );
     }
 
     const media = await Media.findById(data.mediaId);
@@ -305,14 +413,19 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     try {
       s3Data = await getVideoMetadataFromS3(key);
     } catch (err) {
-      console.error("[confirmLessonVideoUploadS3] File lookup failed on S3. Cleaning up:", err);
+      console.error(
+        "[confirmLessonVideoUploadS3] File lookup failed on S3. Cleaning up:",
+        err,
+      );
       await deleteVideoFromS3(key);
       await media.deleteOne();
       return errorResponse(res, 400, "File does not exist on storage");
     }
 
     if (s3Data.contentLength !== data.size) {
-      console.error(`[confirmLessonVideoUploadS3] File size mismatch: expected ${data.size}, got ${s3Data.contentLength}`);
+      console.error(
+        `[confirmLessonVideoUploadS3] File size mismatch: expected ${data.size}, got ${s3Data.contentLength}`,
+      );
       await deleteVideoFromS3(key);
       await media.deleteOne();
       return errorResponse(res, 400, "File size mismatch on storage");
@@ -341,17 +454,27 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     }
 
     const updatedLesson = await Lesson.findById(lessonId).populate("video");
-    return successResponse(res, 200, "Lesson video upload confirmed and associated successfully", { lesson: updatedLesson, media });
+
+    await createJob({ mediaId: key });
+
+    return successResponse(
+      res,
+      200,
+      "Lesson video upload confirmed and associated successfully",
+      { lesson: updatedLesson, media },
+    );
   } catch (err) {
     console.error("[confirmLessonVideoUploadS3] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to confirm upload");
   }
 };
 
+
 // GET /media/:id/download
 export const getMediaDownloadUrl = async (req, res) => {
   const { id } = req.params;
-  if (!/^[a-f\d]{24}$/i.test(id)) return errorResponse(res, 400, "Invalid media ID");
+  if (!/^[a-f\d]{24}$/i.test(id))
+    return errorResponse(res, 400, "Invalid media ID");
 
   try {
     const media = await Media.findById(id);
@@ -363,7 +486,9 @@ export const getMediaDownloadUrl = async (req, res) => {
         Bucket: process.env.AWS_VIDEO_BUCKET,
         Key: media._id.toString(),
       });
-      downloadUrl = await getSignedUrl(awsS3Client, command, { expiresIn: 3600 });
+      downloadUrl = await getSignedUrl(awsS3Client, command, {
+        expiresIn: 3600,
+      });
     } else {
       const command = new GetObjectCommand({
         Bucket: process.env.BUCKET_NAME,
@@ -374,7 +499,10 @@ export const getMediaDownloadUrl = async (req, res) => {
 
     return successResponse(res, 200, "Download URL generated", { downloadUrl });
   } catch (err) {
-    console.error("[getMediaDownloadUrl] Failed to generate presigned GET URL:", err);
+    console.error(
+      "[getMediaDownloadUrl] Failed to generate presigned GET URL:",
+      err,
+    );
     return errorResponse(res, 500, "Failed to generate download URL");
   }
 };
@@ -382,7 +510,8 @@ export const getMediaDownloadUrl = async (req, res) => {
 // DELETE /media/:id
 export const deleteMedia = async (req, res) => {
   const { id } = req.params;
-  if (!/^[a-f\d]{24}$/i.test(id)) return errorResponse(res, 400, "Invalid media ID");
+  if (!/^[a-f\d]{24}$/i.test(id))
+    return errorResponse(res, 400, "Invalid media ID");
 
   try {
     const media = await Media.findById(id);
@@ -393,7 +522,11 @@ export const deleteMedia = async (req, res) => {
       req.user.role !== "ADMIN" &&
       media.uploadedBy.toString() !== req.user._id.toString()
     ) {
-      return errorResponse(res, 403, "You do not have permission to delete this media");
+      return errorResponse(
+        res,
+        403,
+        "You do not have permission to delete this media",
+      );
     }
 
     if (media.storageProvider === "AWS_S3") {
@@ -410,3 +543,67 @@ export const deleteMedia = async (req, res) => {
   }
 };
 
+// Media process-complete by lambda
+export const mediaProcessCompleted = async (req, res) => {
+  const lambdaSecret = req.header("x-veolms-secret");
+
+  if (!lambdaSecret || lambdaSecret !== process.env.LAMBDA_SECRET) {
+    return errorResponse(res, 401, "Unauthorized");
+  }
+
+  const { success, data, error } = mediaProcessingCompleteSchema.safeParse(req.body);
+  if (!success) {
+    return errorResponse(res, 400, error.issues[0].message);
+  }
+
+  const { mediaId, jobId, status, errorMessage } = data;
+
+  // Log details to media-processing.log
+  const logFilePath = path.join(process.cwd(), "logs", "media-processing.log");
+  try {
+    await fs.mkdir(path.dirname(logFilePath), { recursive: true });
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      mediaId,
+      jobId,
+      status,
+      errorMessage,
+      warnings: data.warnings,
+    };
+    await fs.appendFile(logFilePath, JSON.stringify(logEntry) + "\n", "utf8");
+  } catch (err) {
+    console.error("Failed to write to media-processing log file:", err);
+  }
+
+  try {
+    const media = await Media.findById(mediaId);
+    if (!media) {
+      return errorResponse(res, 404, "Media record not found");
+    }
+
+    if (media.status === "READY") {
+      return successResponse(res, 200, "Media already processed", { media });
+    }
+
+    if (status === "ERROR") {
+      media.status = "FAILED";
+      media.error = errorMessage || "MediaConvert job failed";
+      media.jobId = jobId;
+      await media.save();
+      return successResponse(res, 200, "Media processing failure saved", { media });
+    }
+
+    if (status === "COMPLETE") {
+      console.log(`Processing completed for mediaId: ${mediaId}`);
+      media.status = "READY";
+      media.jobId = jobId;
+      await media.save();
+      return successResponse(res, 200, "Processing completed successfully", { media });
+    }
+
+    return errorResponse(res, 400, "Unknown job status");
+  } catch (err) {
+    console.error("[mediaProcessCompleted] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to handle processing complete callback");
+  }
+};

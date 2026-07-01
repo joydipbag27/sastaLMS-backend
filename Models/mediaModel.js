@@ -22,7 +22,7 @@ const mediaSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["UPLOADING", "READY", "FAILED"],
+      enum: ["UPLOADING", "PROCESSING", "READY", "FAILED"],
       default: "UPLOADING",
     },
 
@@ -38,6 +38,14 @@ const mediaSchema = new mongoose.Schema(
       enum: ["BACKBLAZE", "AWS_S3"],
       default: "BACKBLAZE",
       required: true,
+    },
+
+    jobId: {
+      type: String,
+    },
+
+    error: {
+      type: String,
     },
   },
   {

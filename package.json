@@ -14,6 +14,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-mediaconvert": "^3.1076.0",
     "@aws-sdk/client-s3": "^3.966.0",
     "@aws-sdk/s3-request-presigner": "^3.966.0",
     "bcryptjs": "^3.0.3",

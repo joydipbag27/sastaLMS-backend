@@ -8,13 +8,18 @@ import {
   confirmLessonVideoUploadS3,
   getMediaDownloadUrl,
   deleteMedia,
+  mediaProcessCompleted
 } from "../Controllers/mediaController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
 
+
 const router = express.Router();
+
+router.post("/internal/processing-complete", mediaProcessCompleted)
+
 
 router.post(
   "/lesson/:lessonId/upload-url",
@@ -78,5 +83,6 @@ router.delete(
   authenticate,
   deleteMedia,
 );
+
 
 export default router;
