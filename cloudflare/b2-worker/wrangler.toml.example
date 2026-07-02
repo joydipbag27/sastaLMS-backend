@@ -1,0 +1,42 @@
+#:schema node_modules/wrangler/config-schema.json
+# For more details on how to configure Wrangler, refer to:
+# https://developers.cloudflare.com/workers/wrangler/configuration/
+name = "b2-worker"
+workers_dev = true
+compatibility_date = "2023-09-04"
+main = "index.js"
+upload_source_maps = true
+compatibility_flags = [ "nodejs_compat" ]
+
+[vars]
+B2_APPLICATION_KEY_ID = ""
+B2_ENDPOINT = ""
+BUCKET_NAME = ""
+ALLOW_LIST_BUCKET = "false"
+RCLONE_DOWNLOAD = "false"
+
+[observability]
+enabled = false
+
+# Smart Placement
+# https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+# [placement]
+# mode = "smart"
+
+# Bindings
+# Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+# databases, object storage, AI inference, real-time communication and more.
+# https://developers.cloudflare.com/workers/runtime-apis/bindings/
+
+# Static Assets
+# https://developers.cloudflare.com/workers/static-assets/binding/
+# [assets]
+# directory = "./public/"
+# binding = "ASSETS"
+
+# Service Bindings (communicate between multiple Workers)
+# https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
+# [[services]]
+# binding = "MY_SERVICE"
+# service = "my-service"
+
