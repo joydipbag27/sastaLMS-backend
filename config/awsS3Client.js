@@ -1,4 +1,11 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectVersionsCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  ListObjectVersionsCommand,
+  DeleteObjectsCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export const awsS3Client = new S3Client({
@@ -16,7 +23,9 @@ export const generateThumbnailUploadUrl = async (mediaId, mimeType) => {
     Key: objectKey,
     ContentType: mimeType,
   });
-  const uploadUrl = await getSignedUrl(awsS3Client, command, { expiresIn: 3600 });
+  const uploadUrl = await getSignedUrl(awsS3Client, command, {
+    expiresIn: 3600,
+  });
   return { uploadUrl, objectKey };
 };
 
@@ -27,7 +36,7 @@ export const deleteThumbnailFromS3 = async (mediaId) => {
       new DeleteObjectCommand({
         Bucket: process.env.AWS_THUMBNAIL_BUCKET,
         Key: objectKey,
-      })
+      }),
     );
   } catch (err) {
     console.error(`Failed to delete thumbnail ${objectKey} from S3:`, err);
@@ -49,17 +58,19 @@ export const getThumbnailMetadata = async (mediaId) => {
 
 export const generateVideoUploadUrlS3 = async (mediaId, mimeType) => {
   const command = new PutObjectCommand({
-    Bucket: process.env.AWS_VIDEO_BUCKET,
+    Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
     Key: mediaId,
     ContentType: mimeType,
   });
-  const uploadUrl = await getSignedUrl(awsS3Client, command, { expiresIn: 3600 });
+  const uploadUrl = await getSignedUrl(awsS3Client, command, {
+    expiresIn: 3600,
+  });
   return { uploadUrl };
 };
 
 export const getVideoMetadataFromS3 = async (mediaId) => {
   const command = new HeadObjectCommand({
-    Bucket: process.env.AWS_VIDEO_BUCKET,
+    Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
     Key: mediaId,
   });
   const metadata = await awsS3Client.send(command);
@@ -83,12 +94,15 @@ export const permanentlyDeleteMultipleFromS3 = async (keys) => {
     try {
       versionsData = await awsS3Client.send(
         new ListObjectVersionsCommand({
-          Bucket: process.env.AWS_VIDEO_BUCKET,
+          Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
           Prefix: key,
-        })
+        }),
       );
     } catch (err) {
-      console.error(`Failed to list object versions for key ${key} from S3:`, err);
+      console.error(
+        `Failed to list object versions for key ${key} from S3:`,
+        err,
+      );
     }
 
     let versionsFound = false;
@@ -126,7 +140,7 @@ export const permanentlyDeleteMultipleFromS3 = async (keys) => {
   try {
     await awsS3Client.send(
       new DeleteObjectsCommand({
-        Bucket: process.env.AWS_VIDEO_BUCKET,
+        Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
         Delete: {
           Objects: objectsToDelete,
           Quiet: true,
@@ -137,4 +151,3 @@ export const permanentlyDeleteMultipleFromS3 = async (keys) => {
     console.error("Failed to delete objects from S3:", err);
   }
 };
-

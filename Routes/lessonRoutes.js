@@ -8,6 +8,7 @@ import {
   updateLesson,
   deleteLesson,
 } from "../Controllers/lessonController.js";
+import { getLessonPlaybackUrl } from "../Controllers/mediaController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
 import { authorize } from "../middlewares/authorize.js";
@@ -39,6 +40,14 @@ router.get(
   authenticate,
   authorize(roles.CREATOR, roles.ADMIN),
   getMyLessonById,
+);
+
+router.get(
+  "/:id/play",
+  customRateLimit(1, 30),
+  authenticate,
+  checkLessonAccess,
+  getLessonPlaybackUrl,
 );
 
 router.get("/:id", authenticate, checkLessonAccess, getLessonById);

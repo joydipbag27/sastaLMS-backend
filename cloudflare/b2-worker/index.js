@@ -29,6 +29,132 @@ const HTTPS_PORT = "443";
 // How many times to retry a range request where the response is missing content-range
 const RANGE_RETRY_ATTEMPTS = 3;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloudflare Cache API helper
+//
+// .ts segments are immutable (same bytes for a given mediaId + segment number).
+// We cache them at the Cloudflare edge using a token-stripped URL as the key,
+// so all users share the same cached bytes regardless of their unique token.
+//
+// .m3u8 manifests are NEVER cached here — we rewrite them per-request to
+// inject the active token into every URI line.
+//
+// Requires: Workers Paid plan (caches.default.put is not available on Free).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns a token-stripped URL string suitable for use as a cache key.
+ * Removes the `token` query parameter so all users share the same cache entry
+ * for identical segment files.
+ * @param {URL} url
+ * @returns {string}
+ */
+function buildCacheKey(url) {
+    const key = new URL(url.toString());
+    key.searchParams.delete('token');
+    return key.toString();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Playback token verification (HMAC-SHA256 via Web Crypto)
+//
+// Token format (mirrors playbackTokenService.js on the backend):
+//   <base64url(JSON payload)>.<base64url(HMAC-SHA256 signature)>
+//
+// Payload shape: { userId, mediaId, courseId, exp }
+//
+// Required Worker secret: PLAYBACK_TOKEN_SECRET
+//   Set via: wrangler secret put PLAYBACK_TOKEN_SECRET
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Decodes a URL-safe base64 string to a plain UTF-8 string.
+ * @param {string} str
+ * @returns {string}
+ */
+function fromBase64Url(str) {
+    const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(padded);
+    return decodeURIComponent(
+        binary.split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+    );
+}
+
+/**
+ * Verifies the HMAC-SHA256 playback token.
+ *
+ * Checks (in order):
+ *   1. Token has the correct two-part structure.
+ *   2. HMAC signature is valid (constant-time via crypto.subtle.verify).
+ *   3. Token has not expired.
+ *   4. mediaId in the token matches the requested mediaId from the URL path.
+ *
+ * @param {string} token            - Raw token string from ?token= query param
+ * @param {string} expectedMediaId  - mediaId parsed from the URL path (/videos/<mediaId>/...)
+ * @param {string} secret           - Value of PLAYBACK_TOKEN_SECRET Worker secret
+ * @returns {Promise<{ valid: boolean, reason?: string }>}
+ */
+async function verifyPlaybackToken(token, expectedMediaId, secret) {
+    // 1. Structure check
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+        return { valid: false, reason: 'Malformed token' };
+    }
+    const [encodedPayload, encodedSig] = parts;
+
+    // 2. Import the HMAC key
+    let cryptoKey;
+    try {
+        cryptoKey = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode(secret),
+            { name: 'HMAC', hash: 'SHA-256' },
+            false,
+            ['verify']
+        );
+    } catch {
+        return { valid: false, reason: 'Failed to import key' };
+    }
+
+    // 3. Decode the signature from base64url → Uint8Array
+    let sigBytes;
+    try {
+        const padded = encodedSig.replace(/-/g, '+').replace(/_/g, '/');
+        const binary = atob(padded);
+        sigBytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+    } catch {
+        return { valid: false, reason: 'Invalid signature encoding' };
+    }
+
+    // 4. Verify signature (constant-time)
+    const payloadBytes = new TextEncoder().encode(encodedPayload);
+    const isValid = await crypto.subtle.verify('HMAC', cryptoKey, sigBytes, payloadBytes);
+    if (!isValid) {
+        return { valid: false, reason: 'Invalid signature' };
+    }
+
+    // 5. Parse payload
+    let payload;
+    try {
+        payload = JSON.parse(fromBase64Url(encodedPayload));
+    } catch {
+        return { valid: false, reason: 'Payload parse error' };
+    }
+
+    // 6. Expiry check
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (!payload.exp || nowSeconds > payload.exp) {
+        return { valid: false, reason: 'Token expired' };
+    }
+
+    // 7. mediaId match
+    if (payload.mediaId !== expectedMediaId) {
+        return { valid: false, reason: 'mediaId mismatch' };
+    }
+
+    return { valid: true };
+}
+
 // Filter out cf-* and any other headers we don't want to include in the signature
 function filterHeaders(headers, env) {
     // Suppress irrelevant IntelliJ warning
@@ -63,6 +189,40 @@ export default {
     async fetch(request, env) {
 
         console.log("WORKER STARTED");
+
+        // ── Playback Token Verification ───────────────────────────────────────
+        // Only enforce token verification on /videos/<mediaId>/... paths.
+        // All other paths are blocked by the existing isListBucketRequest guard.
+        const requestUrl = new URL(request.url);
+        const videoPathMatch = requestUrl.pathname.match(/^\/videos\/([a-f0-9]{24})\/.+$/i);
+
+        let activeToken = null;
+
+        if (videoPathMatch) {
+            const mediaId = videoPathMatch[1];
+            const token = requestUrl.searchParams.get('token');
+
+            if (!token) {
+                return new Response('Forbidden: missing token', { status: 403 });
+            }
+
+            if (!env.PLAYBACK_TOKEN_SECRET) {
+                console.error('[b2-worker] PLAYBACK_TOKEN_SECRET is not configured');
+                return new Response('Internal Server Error', { status: 500 });
+            }
+
+            const { valid, reason } = await verifyPlaybackToken(token, mediaId, env.PLAYBACK_TOKEN_SECRET);
+            if (!valid) {
+                console.log(`[b2-worker] Token rejected — ${reason} — path: ${requestUrl.pathname}`);
+                return new Response('Forbidden', { status: 403 });
+            }
+
+            activeToken = token;
+            // Strip the token from the URL before forwarding to B2
+            requestUrl.searchParams.delete('token');
+        }
+        // ── End Token Verification ─────────────────────────────────────────────
+
         // Only allow GET and HEAD methods
         if (!['GET', 'HEAD'].includes(request.method)){
             return new Response(null, {
@@ -71,7 +231,7 @@ export default {
             });
         }
 
-        const url = new URL(request.url);
+        const url = requestUrl;
 
         console.log("1:", request.url);
 
@@ -180,7 +340,6 @@ console.log("Hostname after switch:", url.hostname);
 
 
 
-
                 if (response.headers.has("content-range")) {
                     // Only log if it didn't work first time
                     if (attempts < RANGE_RETRY_ATTEMPTS) {
@@ -205,26 +364,95 @@ console.log("Hostname after switch:", url.hostname);
                 console.error(`Tried range request for ${signedRequest.url} ${RANGE_RETRY_ATTEMPTS} times, but no content-range in response.`);
             }
 
-            if (requestMethod === 'HEAD') {
-                // Original request was HEAD, so return a new Response without a body
-                return createHeadResponse(response);
-            }
-
             // Return whatever response we have rather than an error response
             // This response cannot be aborted, otherwise it will raise an exception
             return response;
         }
 
         // Send the signed request to B2
-        const fetchPromise = fetch(signedRequest);
+        // For immutable .ts segments, check the Cloudflare Cache API first.
+        // This converts DYNAMIC → HIT for all subsequent viewers of the same segment.
+        // NOTE: caches.default.put() requires Workers Paid plan.
+        //       On the free plan, put() is silently swallowed via .catch().
+        //       For free-plan HIT caching, use Cloudflare Cache Rules in the dashboard
+        //       (see README for setup instructions).
+        if (url.pathname.endsWith('.ts')) {
+            const cache = caches.default;
+            const cacheKey = buildCacheKey(url);
+
+            // Cache lookup — match() works on free plan
+            const cachedResponse = await cache.match(cacheKey);
+            if (cachedResponse) {
+                console.log(`[b2-worker] Cache HIT: ${url.pathname}`);
+                return cachedResponse;
+            }
+
+            // Cache MISS — fetch from B2
+            // cf.cacheEverything reduces repeated B2 subrequest hits at the Cloudflare
+            // network level even on the free plan (reduces your B2 bandwidth cost).
+            console.log(`[b2-worker] Cache MISS: ${url.pathname}`);
+            const b2Response = await fetch(signedRequest, {
+                cf: {
+                    cacheEverything: true,
+                    cacheTtl: 31536000,
+                }
+            });
+
+            if (b2Response.ok) {
+                const responseHeaders = new Headers(b2Response.headers);
+                responseHeaders.set('cache-control', 'public, max-age=31536000, immutable');
+                responseHeaders.delete('surrogate-control');
+
+                const responseToCache = new Response(b2Response.body, {
+                    status: b2Response.status,
+                    statusText: b2Response.statusText,
+                    headers: responseHeaders,
+                });
+
+                // cache.put() requires Workers Paid plan.
+                // On free plan this rejects — catch silently so the Worker doesn't crash.
+                cache.put(cacheKey, responseToCache.clone()).catch(err => {
+                    console.warn(`[b2-worker] cache.put() skipped (free plan?): ${err.message}`);
+                });
+
+                return responseToCache;
+            }
+
+            return b2Response;
+        }
+
+        // For all other file types (manifests, etc.) — fetch directly from B2
+        const response = await fetch(signedRequest);
 
         if (requestMethod === 'HEAD') {
-            const response = await fetchPromise;
             // Original request was HEAD, so return a new Response without a body
             return createHeadResponse(response);
         }
 
-        // Return the upstream response unchanged
-        return fetchPromise;
+        // If it's a playlist request, rewrite all sub-playlist and segment links to append the token
+        if (url.pathname.endsWith('.m3u8') && response.ok && activeToken) {
+            let manifestText = await response.text();
+            manifestText = manifestText.split('\n').map(line => {
+                const trimmed = line.trim();
+                if (trimmed.length === 0 || trimmed.startsWith('#')) {
+                    return line;
+                }
+                const separator = trimmed.includes('?') ? '&' : '?';
+                return `${trimmed}${separator}token=${activeToken}`;
+            }).join('\n');
+
+            const newHeaders = new Headers(response.headers);
+            newHeaders.delete('content-length');
+            // Never cache rewritten manifests — they are token-specific
+            newHeaders.set('cache-control', 'no-store');
+
+            return new Response(manifestText, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: newHeaders
+            });
+        }
+
+        return response;
     },
 };

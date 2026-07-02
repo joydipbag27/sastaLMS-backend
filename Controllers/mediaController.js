@@ -1,7 +1,4 @@
-import {
-  GetObjectCommand,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs/promises";
 import path from "path";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -26,6 +23,7 @@ import {
 import { successResponse, errorResponse } from "../utils/response.js";
 import { createJob } from "../services/mediaConvertService.js";
 import { copyHlsFromS3ToB2, deleteS3Assets } from "../services/b2Service.js";
+import { generatePlaybackToken } from "../services/playbackTokenService.js";
 
 // POST /media/s3/lesson/:lessonId/upload-url
 export const getLessonVideoUploadUrlS3 = async (req, res) => {
@@ -246,6 +244,46 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
   }
 };
 
+// GET /lesson/:lessonId/play
+export const getLessonPlaybackUrl = async (req, res) => {
+  try {
+    // req.lesson is pre-fetched and access-validated by checkLessonAccess middleware
+    const lesson = req.lesson;
+
+    if (!lesson.video) {
+      return errorResponse(res, 404, "This lesson does not have a video attached");
+    }
+
+    const media = lesson.video;
+
+    if (media.status !== "READY") {
+      return errorResponse(
+        res,
+        423,
+        "Video is still processing. Please try again shortly.",
+      );
+    }
+
+    const mediaId = media._id.toString();
+    const courseId = lesson.course.toString();
+    const userId = req.user._id.toString();
+
+    const token = generatePlaybackToken({ userId, mediaId, courseId });
+
+    const workerBase = process.env.CLOUDFLARE_WORKER_URL?.replace(/\/$/, "");
+    if (!workerBase) {
+      console.error("[getLessonPlaybackUrl] CLOUDFLARE_WORKER_URL is not configured.");
+      return errorResponse(res, 500, "Playback service is not configured");
+    }
+
+    const playlistUrl = `${workerBase}/videos/${mediaId}/${mediaId}.m3u8?token=${token}`;
+
+    return successResponse(res, 200, "Playback URL generated", { playlistUrl });
+  } catch (err) {
+    console.error("[getLessonPlaybackUrl] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to generate playback URL");
+  }
+};
 
 // GET /media/:id/download
 export const getMediaDownloadUrl = async (req, res) => {
@@ -260,7 +298,7 @@ export const getMediaDownloadUrl = async (req, res) => {
     let downloadUrl;
     if (media.storageProvider === "AWS_S3") {
       const command = new GetObjectCommand({
-        Bucket: process.env.AWS_VIDEO_BUCKET,
+        Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
         Key: media._id.toString(),
       });
       downloadUrl = await getSignedUrl(awsS3Client, command, {
@@ -328,7 +366,9 @@ export const mediaProcessCompleted = async (req, res) => {
     return errorResponse(res, 401, "Unauthorized");
   }
 
-  const { success, data, error } = mediaProcessingCompleteSchema.safeParse(req.body);
+  const { success, data, error } = mediaProcessingCompleteSchema.safeParse(
+    req.body,
+  );
   if (!success) {
     return errorResponse(res, 400, error.issues[0].message);
   }
@@ -367,7 +407,9 @@ export const mediaProcessCompleted = async (req, res) => {
       media.error = errorMessage || "MediaConvert job failed";
       media.jobId = jobId;
       await media.save();
-      return successResponse(res, 200, "Media processing failure saved", { media });
+      return successResponse(res, 200, "Media processing failure saved", {
+        media,
+      });
     }
 
     if (status === "COMPLETE") {
@@ -379,15 +421,26 @@ export const mediaProcessCompleted = async (req, res) => {
         try {
           await deleteS3Assets(mediaId, copiedKeys);
         } catch (cleanupErr) {
-          console.error(`[mediaProcessCompleted] Cleanup failed (non-blocking) for mediaId ${mediaId}:`, cleanupErr);
+          console.error(
+            `[mediaProcessCompleted] Cleanup failed (non-blocking) for mediaId ${mediaId}:`,
+            cleanupErr,
+          );
         }
 
         media.status = "READY";
         media.jobId = jobId;
         await media.save();
-        return successResponse(res, 200, "Processing and copy completed successfully", { media });
+        return successResponse(
+          res,
+          200,
+          "Processing and copy completed successfully",
+          { media },
+        );
       } catch (copyErr) {
-        console.error(`[mediaProcessCompleted] HLS copy to B2 failed for mediaId ${mediaId}:`, copyErr);
+        console.error(
+          `[mediaProcessCompleted] HLS copy to B2 failed for mediaId ${mediaId}:`,
+          copyErr,
+        );
         media.status = "FAILED";
         media.error = copyErr.message || "HLS copy to B2 failed";
         media.jobId = jobId;
@@ -399,6 +452,10 @@ export const mediaProcessCompleted = async (req, res) => {
     return errorResponse(res, 400, "Unknown job status");
   } catch (err) {
     console.error("[mediaProcessCompleted] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to handle processing complete callback");
+    return errorResponse(
+      res,
+      500,
+      "Failed to handle processing complete callback",
+    );
   }
 };
