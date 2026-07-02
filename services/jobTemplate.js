@@ -10,37 +10,22 @@ export const jobTemplate = {
       {
         Name: "Apple HLS",
         Outputs: [
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_480x270p_15Hz_0.4Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_480x270p_15Hz_400Kbps",
-          },
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_640x360p_30Hz_0.6Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_640x360p_30Hz_600Kbps",
-          },
+          // 360p @ 1.2 Mbps — low tier (mobile / slow connections)
+          // Preferred over 600 Kbps: better text/slide legibility for LMS content
           {
             Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_640x360p_30Hz_1.2Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_640x360p_30Hz_1200Kbps",
+            NameModifier: "_360p",
           },
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_960x540p_30Hz_3.5Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_960x540p_30Hz_3500Kbps",
-          },
+          // 720p @ 3.5 Mbps — mid tier (standard desktop / tablet)
+          // 5.0 and 6.5 Mbps variants are for fast-motion sports; not needed for lectures
           {
             Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_3.5Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_3500Kbps",
+            NameModifier: "_720p",
           },
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_5.0Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_5000Kbps",
-          },
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_6.5Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_1280x720p_30Hz_6500Kbps",
-          },
+          // 1080p @ 8.5 Mbps — high tier (high-quality desktop playback)
           {
             Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1920x1080p_30Hz_8.5Mbps",
-            NameModifier: "_Ott_Hls_Ts_Avc_Aac_16x9_1920x1080p_30Hz_8500Kbps",
+            NameModifier: "_1080p",
           },
         ],
         OutputGroupSettings: {

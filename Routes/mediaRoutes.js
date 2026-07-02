@@ -1,8 +1,5 @@
 import express from "express";
 import {
-  getLessonVideoUploadUrl,
-  getLessonVideoReplaceUrl,
-  confirmLessonVideoUpload,
   getLessonVideoUploadUrlS3,
   getLessonVideoReplaceUrlS3,
   confirmLessonVideoUploadS3,
@@ -20,30 +17,6 @@ const router = express.Router();
 
 router.post("/internal/processing-complete", mediaProcessCompleted)
 
-
-router.post(
-  "/lesson/:lessonId/upload-url",
-  customRateLimit(1, 15),
-  authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
-  getLessonVideoUploadUrl,
-);
-
-router.post(
-  "/lesson/:lessonId/replace-url",
-  customRateLimit(1, 15),
-  authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
-  getLessonVideoReplaceUrl,
-);
-
-router.post(
-  "/lesson/:lessonId/confirm",
-  customRateLimit(1, 15),
-  authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
-  confirmLessonVideoUpload,
-);
 
 // S3 video upload routes
 router.post(
