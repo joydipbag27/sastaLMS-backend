@@ -190,6 +190,13 @@ export default {
 
         console.log("WORKER STARTED");
 
+        // Entry-point security gate: only allow .m3u8 and .ts requests under /videos/
+        const checkUrl = new URL(request.url);
+        const pathLower = checkUrl.pathname.toLowerCase();
+        if (!pathLower.startsWith('/videos/') || (!pathLower.endsWith('.m3u8') && !pathLower.endsWith('.ts'))) {
+            return new Response('Not Found', { status: 404 });
+        }
+
         // ── Playback Token Verification ───────────────────────────────────────
         // Only enforce token verification on /videos/<mediaId>/... paths.
         // All other paths are blocked by the existing isListBucketRequest guard.
@@ -224,7 +231,7 @@ export default {
         // ── End Token Verification ─────────────────────────────────────────────
 
         // Only allow GET and HEAD methods
-        if (!['GET', 'HEAD'].includes(request.method)){
+        if (!['GET', 'HEAD'].includes(request.method)) {
             return new Response(null, {
                 status: 405,
                 statusText: "Method Not Allowed"
@@ -288,10 +295,8 @@ export default {
         });
 
         console.log("5:", client);
-        console.log("BUCKET_NAME:", env.BUCKET_NAME);
-console.log("B2_ENDPOINT:", env.B2_ENDPOINT);
-console.log("BUCKET_NAME:", env['B2_APPLICATION_KEY_ID']);
-console.log("B2_ENDPOINT:", env['B2_APPLICATION_KEY']);
+
+
         // Save the request method, so we can process responses for HEAD requests appropriately
         const requestMethod = request.method;
 
@@ -302,9 +307,9 @@ console.log("B2_ENDPOINT:", env['B2_APPLICATION_KEY']);
             } else {
                 // Remove leading file/{bucket_name}/ prefix from the path 
                 url.pathname = path.replace(/^file\/[^/]+\//, "");
-            }            
+            }
         }
-console.log("Hostname after switch:", url.hostname);
+        console.log("Hostname after switch:", url.hostname);
         // Sign the outgoing request
         //
         // For HEAD requests Cloudflare appears to change the method on the outgoing request to GET (#18), which
@@ -315,7 +320,7 @@ console.log("Hostname after switch:", url.hostname);
             headers: headers
         });
 
-        console.log("3:",signedRequest.headers.has("range"));
+        console.log("3:", signedRequest.headers.has("range"));
         console.log("4:", signedRequest.url);
 
         // For large files, Cloudflare will return the entire file, rather than the requested range
@@ -327,7 +332,7 @@ console.log("Hostname after switch:", url.hostname);
             let response;
             do {
                 let controller = new AbortController();
-            
+
                 response = await fetch(signedRequest.url, {
                     method: signedRequest.method,
                     headers: signedRequest.headers,
@@ -335,7 +340,7 @@ console.log("Hostname after switch:", url.hostname);
                 });
 
 
- console.log(signedRequest);
+                console.log(signedRequest);
 
 
 
@@ -377,48 +382,145 @@ console.log("Hostname after switch:", url.hostname);
         //       For free-plan HIT caching, use Cloudflare Cache Rules in the dashboard
         //       (see README for setup instructions).
         if (url.pathname.endsWith('.ts')) {
+            const startTime = Date.now();
             const cache = caches.default;
             const cacheKey = buildCacheKey(url);
 
-            // Cache lookup — match() works on free plan
+            // 1. Cache lookup
+            const cacheLookupStart = Date.now();
             const cachedResponse = await cache.match(cacheKey);
+            const cacheLookupTime = Date.now() - cacheLookupStart;
+
             if (cachedResponse) {
-                console.log(`[b2-worker] Cache HIT: ${url.pathname}`);
-                return cachedResponse;
+                const totalTime = Date.now() - startTime;
+                console.log(`[b2-worker] CACHE_MATCH = HIT`);
+                console.log(`Cache lookup: ${cacheLookupTime}ms`);
+                console.log(`Origin fetch: N/A`);
+                console.log(`cache.put: N/A`);
+                console.log(`Total: ${totalTime}ms`);
+
+                console.log([
+                    "========== CACHE DEBUG ==========",
+                    `Request:\n${url.pathname}`,
+                    ``,
+                    `Cache Key:\n${cacheKey}`,
+                    ``,
+                    `MATCH:\nHIT`,
+                    ``,
+                    `PUT:\nSKIPPED`,
+                    ``,
+                    `Total:\n${totalTime}ms`,
+                    "================================"
+                ].join("\n"));
+
+                const hitHeaders = new Headers(cachedResponse.headers);
+                hitHeaders.set('x-worker-cache-match', 'HIT');
+                hitHeaders.set('x-worker-cache-put', 'SKIPPED');
+                hitHeaders.set('x-worker-origin-fetch-ms', 'N/A');
+                hitHeaders.set('x-worker-total-ms', String(totalTime));
+
+                return new Response(cachedResponse.body, {
+                    status: cachedResponse.status,
+                    statusText: cachedResponse.statusText,
+                    headers: hitHeaders
+                });
             }
 
-            // Cache MISS — fetch from B2
-            // cf.cacheEverything reduces repeated B2 subrequest hits at the Cloudflare
-            // network level even on the free plan (reduces your B2 bandwidth cost).
-            console.log(`[b2-worker] Cache MISS: ${url.pathname}`);
+            // 2. Cache MISS — fetch from B2
+            console.log(`[b2-worker] CACHE_MATCH = MISS`);
+            const originFetchStart = Date.now();
             const b2Response = await fetch(signedRequest, {
                 cf: {
                     cacheEverything: true,
                     cacheTtl: 31536000,
                 }
             });
+            const originFetchTime = Date.now() - originFetchStart;
 
             if (b2Response.ok) {
                 const responseHeaders = new Headers(b2Response.headers);
                 responseHeaders.set('cache-control', 'public, max-age=31536000, immutable');
                 responseHeaders.delete('surrogate-control');
 
-                const responseToCache = new Response(b2Response.body, {
+                responseHeaders.set('x-worker-cache-match', 'MISS');
+                responseHeaders.set('x-worker-origin-fetch-ms', String(originFetchTime));
+
+                const clientResponse = new Response(b2Response.body, {
                     status: b2Response.status,
                     statusText: b2Response.statusText,
                     headers: responseHeaders,
                 });
 
-                // cache.put() requires Workers Paid plan.
-                // On free plan this rejects — catch silently so the Worker doesn't crash.
-                cache.put(cacheKey, responseToCache.clone()).catch(err => {
-                    console.warn(`[b2-worker] cache.put() skipped (free plan?): ${err.message}`);
-                });
+                const cacheResponse = clientResponse.clone();
 
-                return responseToCache;
+                const cachePutStart = Date.now();
+                let putStatus = "SKIPPED";
+                try {
+                    await cache.put(cacheKey, cacheResponse);
+                    putStatus = "SUCCESS";
+                    console.log("CACHE_PUT_SUCCESS");
+                } catch (err) {
+                    putStatus = "FAILED";
+                    console.error("CACHE_PUT_FAILED", err);
+                }
+                const cachePutTime = Date.now() - cachePutStart;
+
+                const totalTime = Date.now() - startTime;
+
+                console.log(`Cache lookup: ${cacheLookupTime}ms`);
+                console.log(`Origin fetch: ${originFetchTime}ms`);
+                console.log(`cache.put: ${cachePutTime}ms`);
+                console.log(`Total: ${totalTime}ms`);
+
+                console.log([
+                    "========== CACHE DEBUG ==========",
+                    `Request:\n${url.pathname}`,
+                    ``,
+                    `Cache Key:\n${cacheKey}`,
+                    ``,
+                    `MATCH:\nMISS`,
+                    ``,
+                    `PUT:\n${putStatus}`,
+                    ``,
+                    `Total:\n${totalTime}ms`,
+                    "================================"
+                ].join("\n"));
+
+                clientResponse.headers.set('x-worker-cache-put', putStatus);
+                clientResponse.headers.set('x-worker-total-ms', String(totalTime));
+
+                return clientResponse;
             }
 
-            return b2Response;
+            const totalTime = Date.now() - startTime;
+            console.log(`[b2-worker] Request failed with B2 status ${b2Response.status}`);
+            console.log(`Total: ${totalTime}ms`);
+
+            console.log([
+                "========== CACHE DEBUG ==========",
+                `Request:\n${url.pathname}`,
+                ``,
+                `Cache Key:\n${cacheKey}`,
+                ``,
+                `MATCH:\nMISS`,
+                ``,
+                `PUT:\nN/A`,
+                ``,
+                `Total:\n${totalTime}ms`,
+                "================================"
+            ].join("\n"));
+
+            const failHeaders = new Headers(b2Response.headers);
+            failHeaders.set('x-worker-cache-match', 'MISS');
+            failHeaders.set('x-worker-cache-put', 'N/A');
+            failHeaders.set('x-worker-origin-fetch-ms', String(originFetchTime));
+            failHeaders.set('x-worker-total-ms', String(totalTime));
+
+            return new Response(b2Response.body, {
+                status: b2Response.status,
+                statusText: b2Response.statusText,
+                headers: failHeaders
+            });
         }
 
         // For all other file types (manifests, etc.) — fetch directly from B2
