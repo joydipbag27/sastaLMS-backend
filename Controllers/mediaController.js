@@ -22,7 +22,14 @@ import {
 } from "../validators/mediaSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { createJob } from "../services/mediaConvertService.js";
-import { copyHlsFromS3ToB2, deleteS3Assets } from "../services/b2Service.js";
+import {
+  deleteConfirmedS3Objects,
+  deleteS3InputVideo,
+} from "../services/b2Service.js";
+import {
+  transferHlsToB2,
+  retryFailedTransfers,
+} from "../services/rcloneTransferService.js";
 import { generatePlaybackToken } from "../services/playbackTokenService.js";
 
 // POST /media/s3/lesson/:lessonId/upload-url
@@ -413,40 +420,68 @@ export const mediaProcessCompleted = async (req, res) => {
     }
 
     if (status === "COMPLETE") {
+      let transferResult;
       try {
-        // 1. Copy HLS files from S3 to B2
-        const copiedKeys = await copyHlsFromS3ToB2(mediaId);
+        // 1. Run the rclone transfer pipeline (multi-round, fault-tolerant)
+        transferResult = await transferHlsToB2(mediaId);
+      } catch (transferErr) {
+        // A hard error here means rclone couldn't even start or S3 listing
+        // failed — not a per-file copy failure. Mark as FAILED.
+        console.error(
+          `[mediaProcessCompleted] Transfer pipeline hard error for mediaId ${mediaId}:`,
+          transferErr,
+        );
+        media.status = "FAILED";
+        media.error = transferErr.message || "HLS transfer pipeline failed";
+        media.jobId = jobId;
+        await media.save();
+        return errorResponse(res, 500, "HLS transfer pipeline failed");
+      }
 
-        // 2. Perform best-effort cleanup of S3 assets
-        try {
-          await deleteS3Assets(mediaId, copiedKeys);
-        } catch (cleanupErr) {
-          console.error(
-            `[mediaProcessCompleted] Cleanup failed (non-blocking) for mediaId ${mediaId}:`,
-            cleanupErr,
-          );
-        }
+      // 2. Delete S3 objects that are CONFIRMED present in B2.
+      //    Objects in transferResult.failedKeys are intentionally left in S3.
+      await deleteConfirmedS3Objects(mediaId, transferResult.copiedKeys);
+
+      if (transferResult.status === "READY") {
+        // All objects copied — delete the original input video and mark READY.
+        await deleteS3InputVideo(mediaId);
 
         media.status = "READY";
         media.jobId = jobId;
+        media.copyAttempts = (media.copyAttempts ?? 0) + 1;
         await media.save();
+
         return successResponse(
           res,
           200,
-          "Processing and copy completed successfully",
+          "Processing and transfer completed successfully",
           { media },
         );
-      } catch (copyErr) {
-        console.error(
-          `[mediaProcessCompleted] HLS copy to B2 failed for mediaId ${mediaId}:`,
-          copyErr,
-        );
-        media.status = "FAILED";
-        media.error = copyErr.message || "HLS copy to B2 failed";
-        media.jobId = jobId;
-        await media.save();
-        return errorResponse(res, 500, "HLS copy to B2 failed");
       }
+
+      // Partial transfer — some files are still missing in B2.
+      // Do NOT mark as FAILED. Do NOT rerun MediaConvert.
+      // Leave failed S3 objects intact for future recovery.
+      console.warn(
+        `[mediaProcessCompleted] Partial transfer for mediaId ${mediaId}: ` +
+          `${transferResult.failedKeys.length}/${transferResult.totalObjects} objects missing. ` +
+          `Status set to COPY_PENDING.`,
+      );
+
+      media.status = "COPY_PENDING";
+      media.jobId = jobId;
+      media.failedUploadLog = transferResult.logPath;
+      media.copyAttempts = (media.copyAttempts ?? 0) + 1;
+      await media.save();
+
+      return successResponse(
+        res,
+        200,
+        `MediaConvert succeeded. Transfer partially complete: ` +
+          `${transferResult.failedKeys.length} file(s) still pending. ` +
+          `Use the retry-transfer endpoint to recover.`,
+        { media },
+      );
     }
 
     return errorResponse(res, 400, "Unknown job status");
@@ -457,5 +492,83 @@ export const mediaProcessCompleted = async (req, res) => {
       500,
       "Failed to handle processing complete callback",
     );
+  }
+};
+
+// POST /media/:id/retry-transfer  (ADMIN only)
+export const retryMediaTransfer = async (req, res) => {
+  const { id } = req.params;
+  if (!/^[a-f\d]{24}$/i.test(id))
+    return errorResponse(res, 400, "Invalid media ID");
+
+  try {
+    const media = await Media.findById(id);
+    if (!media) return errorResponse(res, 404, "Media record not found");
+
+    if (media.status !== "COPY_PENDING") {
+      return errorResponse(
+        res,
+        400,
+        `Cannot retry transfer: media status is "${media.status}". ` +
+          `Only COPY_PENDING media can be retried.`,
+      );
+    }
+
+    console.log(
+      `[retryMediaTransfer] Starting recovery for mediaId: ${id} ` +
+        `(attempt ${(media.copyAttempts ?? 0) + 1})`,
+    );
+
+    let transferResult;
+    try {
+      transferResult = await retryFailedTransfers(id);
+    } catch (err) {
+      console.error(
+        `[retryMediaTransfer] Recovery pipeline error for mediaId ${id}:`,
+        err,
+      );
+      return errorResponse(res, 500, "Transfer retry pipeline failed");
+    }
+
+    // Delete any S3 objects that are now confirmed in B2
+    await deleteConfirmedS3Objects(id, transferResult.copiedKeys);
+
+    media.copyAttempts = (media.copyAttempts ?? 0) + 1;
+
+    if (transferResult.status === "READY") {
+      // Full recovery — delete the original input video and mark READY
+      await deleteS3InputVideo(id);
+
+      media.status = "READY";
+      media.failedUploadLog = null;
+      await media.save();
+
+      return successResponse(
+        res,
+        200,
+        "Transfer recovery complete. Media is now READY.",
+        { media },
+      );
+    }
+
+    // Still partially pending
+    media.status = "COPY_PENDING";
+    media.failedUploadLog = transferResult.logPath;
+    await media.save();
+
+    return successResponse(
+      res,
+      200,
+      `Transfer still incomplete: ${transferResult.failedKeys.length} file(s) pending. ` +
+        `Retry again later.`,
+      {
+        media,
+        failedKeys: transferResult.failedKeys,
+        totalObjects: transferResult.totalObjects,
+      },
+    );
+  } catch (err) {
+    console.error("[retryMediaTransfer] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to process transfer retry");
   }
 };

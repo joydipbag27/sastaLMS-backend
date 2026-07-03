@@ -23,10 +23,10 @@ export const jobTemplate = {
             NameModifier: "_720p",
           },
           // 1080p @ 8.5 Mbps — high tier (high-quality desktop playback)
-          {
-            Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1920x1080p_30Hz_8.5Mbps",
-            NameModifier: "_1080p",
-          },
+          // {
+          //   Preset: "System-Ott_Hls_Ts_Avc_Aac_16x9_1920x1080p_30Hz_8.5Mbps",
+          //   NameModifier: "_1080p",
+          // },
         ],
         OutputGroupSettings: {
           Type: "HLS_GROUP_SETTINGS",

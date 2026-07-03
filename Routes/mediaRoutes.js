@@ -5,7 +5,8 @@ import {
   confirmLessonVideoUploadS3,
   getMediaDownloadUrl,
   deleteMedia,
-  mediaProcessCompleted
+  mediaProcessCompleted,
+  retryMediaTransfer,
 } from "../Controllers/mediaController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { authorize } from "../middlewares/authorize.js";
@@ -57,5 +58,13 @@ router.delete(
   deleteMedia,
 );
 
+// Admin-only: retry a COPY_PENDING media's failed file transfers
+router.post(
+  "/:id/retry-transfer",
+  customRateLimit(1, 5),
+  authenticate,
+  authorize(roles.ADMIN),
+  retryMediaTransfer,
+);
 
 export default router;

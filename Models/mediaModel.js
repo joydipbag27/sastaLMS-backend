@@ -22,8 +22,20 @@ const mediaSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["UPLOADING", "PROCESSING", "READY", "FAILED"],
+      enum: ["UPLOADING", "PROCESSING", "READY", "FAILED", "COPY_PENDING"],
       default: "UPLOADING",
+    },
+
+    // Set when status is COPY_PENDING — absolute path to the failed-upload.log file
+    failedUploadLog: {
+      type: String,
+      default: null,
+    },
+
+    // Number of rclone pipeline runs attempted (for diagnostics and auditing)
+    copyAttempts: {
+      type: Number,
+      default: 0,
     },
 
     type: {

@@ -195,11 +195,13 @@ This logic applies to:
 | `uploadedBy` | ObjectId → User | Required, indexed |
 | `mimeType` | String | Required |
 | `size` | Number | Bytes, required |
-| `status` | String | `UPLOADING` \| `READY` \| `FAILED`, default `UPLOADING` |
+| `status` | String | `UPLOADING` \| `PROCESSING` \| `READY` \| `FAILED` \| `COPY_PENDING`, default `UPLOADING` |
+| `failedUploadLog` | String | Absolute path to `failed-upload.log` when status is `COPY_PENDING`, otherwise `null` |
+| `copyAttempts` | Number | Number of rclone pipeline runs attempted (default `0`) |
 | `type` | String | `VIDEO` \| `THUMBNAIL`, default `VIDEO` |
 | `storageProvider` | String | `BACKBLAZE` \| `AWS_S3`, default `BACKBLAZE` |
 
-> Media is the application's universal uploaded asset model. Business models (Course, Lesson) reference Media documents. The `_id` serves as the storage key for both Backblaze B2 (videos) and AWS S3 (thumbnails).
+> **`COPY_PENDING`**: MediaConvert succeeded and the HLS output was partially transferred to B2. Some files are still in S3 awaiting recovery. An admin can call `POST /media/:id/retry-transfer` to attempt recovery without rerunning MediaConvert.
 
 ### `OTP`
 Stores short-lived OTPs for email verification and password resets (TTL-managed).
@@ -330,6 +332,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `POST` | `/media/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify upload on B2 (HeadObject + size check), finalize Media document, and associate with lesson |
 | `GET` | `/media/:id/download` | 🔑 | 30/min | Generate a presigned GET URL for a media file |
 | `DELETE` | `/media/:id` | 🔑 | 10/min | Delete media from B2 + MongoDB (uploader or ADMIN only) |
+| `POST` | `/media/:id/retry-transfer` | 🔑👑 | 5/min | Retry pending file transfers for a `COPY_PENDING` media (ADMIN only). Reads `failed-upload.log`, retries missing files, promotes to `READY` on success |
 
 ---
 
