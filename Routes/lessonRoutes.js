@@ -9,6 +9,7 @@ import {
   deleteLesson,
 } from "../Controllers/lessonController.js";
 import { getLessonPlaybackUrl } from "../Controllers/mediaController.js";
+import { getLessonProgress, updateLessonProgress } from "../Controllers/lessonProgressController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
 import { authorize } from "../middlewares/authorize.js";
@@ -49,6 +50,9 @@ router.get(
   checkLessonAccess,
   getLessonPlaybackUrl,
 );
+
+router.get("/:id/progress", authenticate, checkLessonAccess, getLessonProgress);
+router.patch("/:id/progress", authenticate, checkLessonAccess, updateLessonProgress);
 
 router.get("/:id", authenticate, checkLessonAccess, getLessonById);
 
