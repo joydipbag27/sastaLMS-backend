@@ -59,6 +59,11 @@ const mediaSchema = new mongoose.Schema(
     error: {
       type: String,
     },
+
+    duration: {
+      type: Number,
+      default: null,
+    },
   },
   {
     timestamps: true,

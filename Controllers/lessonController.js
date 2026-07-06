@@ -13,7 +13,7 @@ export const createLesson = async (req, res) => {
   const { success, data, error } = createLessonSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, course, section, duration, isPreview, order, video } = data;
+  const { title, description, course, section, isPreview, order, video } = data;
 
   try {
     const courseExists = await Course.findById(course);
@@ -39,7 +39,7 @@ export const createLesson = async (req, res) => {
     const orderConflict = await Lesson.findOne({ section, order });
     if (orderConflict) return errorResponse(res, 409, `A lesson with order ${order} already exists in this section`);
 
-    const newLesson = await Lesson.create({ title, description, course, section, duration, isPreview, order, video });
+    const newLesson = await Lesson.create({ title, description, course, section, isPreview, order, video });
     return successResponse(res, 201, "Lesson created successfully", { lesson: newLesson });
   } catch (err) {
     console.error("[createLesson] Unexpected error:", err);

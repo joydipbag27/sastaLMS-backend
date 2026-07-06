@@ -31,6 +31,7 @@ import {
   retryFailedTransfers,
 } from "../services/rcloneTransferService.js";
 import { generatePlaybackToken } from "../services/playbackTokenService.js";
+import { calculateHlsDurationFromS3 } from "../services/durationService.js";
 
 // POST /media/s3/lesson/:lessonId/upload-url
 export const getLessonVideoUploadUrlS3 = async (req, res) => {
@@ -420,9 +421,33 @@ export const mediaProcessCompleted = async (req, res) => {
     }
 
     if (status === "COMPLETE") {
+      // 1. Automatically calculate and save the duration of the processed video
+      try {
+        const duration = await calculateHlsDurationFromS3(mediaId);
+        media.duration = duration;
+        await media.save();
+
+        // Sync the duration with any associated Lesson documents
+        await Lesson.updateMany({ video: media._id }, { duration });
+      } catch (durationErr) {
+        console.error(
+          `[mediaProcessCompleted] Failed to calculate video duration for mediaId ${mediaId}:`,
+          durationErr,
+        );
+        media.status = "FAILED";
+        media.error = durationErr.message || "Failed to calculate video duration";
+        media.jobId = jobId;
+        await media.save();
+        return errorResponse(
+          res,
+          500,
+          durationErr.message || "Failed to calculate video duration",
+        );
+      }
+
       let transferResult;
       try {
-        // 1. Run the rclone transfer pipeline (multi-round, fault-tolerant)
+        // 2. Run the rclone transfer pipeline (multi-round, fault-tolerant)
         transferResult = await transferHlsToB2(mediaId);
       } catch (transferErr) {
         // A hard error here means rclone couldn't even start or S3 listing
