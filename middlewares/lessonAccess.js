@@ -35,6 +35,11 @@ export const checkLessonAccess = async (req, res, next) => {
       return next();
     }
 
+    // Restrict access to unpublished course lessons for students
+    if (course.status !== "Published") {
+      return res.status(403).json({ error: "This course is not published" });
+    }
+
     // 6. Preview access
     if (lesson.isPreview) {
       req.lesson = lesson;

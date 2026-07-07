@@ -3,7 +3,6 @@ import {
   getLessonVideoUploadUrlS3,
   getLessonVideoReplaceUrlS3,
   confirmLessonVideoUploadS3,
-  getMediaDownloadUrl,
   deleteMedia,
   mediaProcessCompleted,
   retryMediaTransfer,
@@ -44,12 +43,6 @@ router.post(
   confirmLessonVideoUploadS3,
 );
 
-router.get(
-  "/:id/download",
-  customRateLimit(1, 30),
-  authenticate,
-  getMediaDownloadUrl,
-);
 
 router.delete(
   "/:id",

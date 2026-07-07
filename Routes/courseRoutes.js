@@ -1,18 +1,20 @@
 import express from "express";
 import {
   createCourse,
-  getCourses,
   getMyCourses,
-  getCourseById,
   updateCourse,
   publishCourse,
   unpublishCourse,
   deleteCourse,
-  getCourseDetails,
   getThumbnailUploadUrl,
   confirmThumbnail,
   deleteThumbnail,
-} from "../Controllers/courseController.js";
+} from "../Controllers/courseCreatorController.js";
+import {
+  getCourses,
+  getCourseById,
+  getCourseDetails,
+} from "../Controllers/courseStudentController.js";
 import { enrollInCourse, getMyEnrollments, getEnrollmentByCourseId } from "../Controllers/enrollmentController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
@@ -47,7 +49,7 @@ router.get(
   getMyEnrollments,
 );
 
-router.get("/:id", getCourseById);
+router.get("/:id", optionalAuthenticate, getCourseById);
 
 router.get("/:id/details", optionalAuthenticate, getCourseDetails);
 

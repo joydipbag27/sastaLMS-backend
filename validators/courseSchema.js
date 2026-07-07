@@ -14,7 +14,6 @@ export const createCourseSchema = z.object({
     .number()
     .nonnegative("Price must be a positive number or zero")
     .default(0),
-  category: z.string().trim().min(1, "Category is required"),
   level: z.enum(["Beginner", "Intermediate", "Advanced"]).default("Beginner"),
   status: z.enum(["Draft", "Published"]).default("Draft"),
 });

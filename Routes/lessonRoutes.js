@@ -54,7 +54,7 @@ router.get(
 router.get("/:id/progress", authenticate, checkLessonAccess, getLessonProgress);
 router.patch("/:id/progress", authenticate, checkLessonAccess, updateLessonProgress);
 
-router.get("/:id", authenticate, checkLessonAccess, getLessonById);
+router.get("/:id", customRateLimit(1, 60), authenticate, checkLessonAccess, getLessonById);
 
 router.patch(
   "/:id",

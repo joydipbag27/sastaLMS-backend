@@ -81,30 +81,25 @@ Three roles are defined in `config/roles.js`:
   - A user can only enroll once (compound unique index on `{ user, course }`).
 - Enrollment status: `Active` or `Completed`.
 
-### 🔒 Lesson Access Control
-Lesson access is determined by a strict middleware chain. The exact priority order is:
+### 🔒 Lesson and Media Access Control
+Lesson and course resource access is determined by strict middleware and controller logic. The authorization hierarchy and rules are:
 
-```
-Is user authenticated?
-    NO  → 401 Unauthorized
-    YES ↓
-Is user ADMIN?
-    YES → Allow (full access)
-    NO  ↓
-Is user the course Creator?
-    YES → Allow (full access)
-    NO  ↓
-Is the lesson marked isPreview?
-    YES → Allow (any authenticated user)
-    NO  ↓
-Is user Enrolled (Active) in this course?
-    YES → Allow
-    NO  → 403 Forbidden
-```
+#### 1. General Access Rules
+- **Creator / Admin Access**: The course creator (or an admin) always retains full access to manage and read their own courses, sections, lessons, and media files, regardless of whether the course `status` is `Draft` or `Published`.
+- **Draft Restriction**: All course metadata, sections, lesson metadata, and media of a `Draft` course are entirely private to the creator/admin. Non-creators (including enrolled students) will be blocked with a `403 Forbidden` error.
+- **Temporary Lock (Draft State)**: If a creator changes a published course back to `Draft`, existing enrollments are preserved, but students temporarily lose all access to read the course, sections, lessons, or media. Access is restored once the course is published again.
 
-This logic applies to:
-- `GET /lesson/:id` — via `checkLessonAccess` middleware.
-- `GET /lesson/section/:sectionId` — inline access control in the controller, using `optionalAuthenticate` to handle both logged-in and logged-out users gracefully.
+#### 2. Media Playback Authorization
+Media playback and token generation are authorized under the following conditions:
+- The requester is the course creator or an admin.
+- **OR** The requester is **authenticated**, the parent course `status` is `Published` **AND** one of:
+  - The lesson is marked as a preview lesson (`isPreview === true`).
+  - The user has an `Active` enrollment in the course.
+
+Unauthenticated guest users cannot watch any media (neither preview nor normal lessons).
+
+#### 3. Metadata Omission (Media ID Stripping)
+To prevent unauthorized media downloads, the media ID (`video` field) is omitted/stripped from the lesson metadata payloads returned in `GET /course/:id/details` and `GET /lesson/section/:sectionId` unless the user meets the media playback authorization rules above.
 
 ### 🖼️ Media Management
 - **Media** is a standalone, reusable module that tracks uploaded-file metadata. It has no knowledge of lessons, courses, or sections — business models (Lesson) reference Media documents.
@@ -112,12 +107,10 @@ This logic applies to:
 - **Upload flow**: Lesson-scoped. `POST /media/lesson/:lessonId/upload-url` creates a draft Media document and returns a presigned PUT URL. The frontend uploads directly to B2. After success, the frontend calls `POST /media/lesson/:lessonId/confirm` to verify and finalize.
 - **Replace flow**: `POST /media/lesson/:lessonId/replace-url` deletes the existing video from B2, creates a new Media document, and returns a fresh presigned PUT URL.
 - **Robust Verification**: When confirming, the backend queries B2/S3 using `HeadObjectCommand` to verify the file exists on the storage server and that its actual size matches the claimed size. If verification fails, the B2 object is cleaned up, the Media document is deleted, and a `400` error is returned.
-- **Download flow**: Backend generates a presigned GET URL on-the-fly from `media._id.toString()`. The URL is never persisted in MongoDB.
 - **Deletion**: Only the original uploader or an ADMIN may delete. Deletes the object from B2 (including all versions/markers) and removes the Media document.
 
 ### 📦 File Storage (Backblaze B2)
 - Generate **pre-signed upload URLs** so clients upload directly to B2, not through the server.
-- Generate **pre-signed download URLs** for secure, time-limited file access.
 - Permanent deletion utility (`permanentlyDeleteMultipleFromB2`) handles versioned objects and delete markers.
 - **Important**: All B2 keys passed to the delete utility must be **strings** (e.g., `_id.toString()`), not ObjectId objects.
 
@@ -154,7 +147,6 @@ This logic applies to:
 | `creator` | ObjectId → User | Required |
 | `thumbnail` | ObjectId → Media | References a Media document representing the course thumbnail |
 | `price` | Number | Default `0` |
-| `category` | String | Required |
 | `level` | String | `Beginner` \| `Intermediate` \| `Advanced` |
 | `status` | String | `Draft` \| `Published`, default `Draft` |
 
@@ -277,7 +269,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `POST` | `/course/` | 🔑🛡️ | 5/min | Create a new course |
-| `GET` | `/course/` | 🔓 | — | List published courses (paginated, filterable by `category`, `level`, `status`) |
+| `GET` | `/course/` | 🔓 | — | List published courses (paginated only) |
 | `GET` | `/course/creator/me` | 🔑🛡️ | — | List creator's own courses. Supports `?status=Draft\|Published\|All` |
 | `GET` | `/course/:id` | 🔓 | — | Get a single course by ID |
 | `GET` | `/course/:id/details` | 👁️ | — | Get full structured course details: course + sections + lessons (video field stripped for non-creators) |
@@ -300,10 +292,10 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `POST` | `/section/` | 🔑🛡️ | 10/min | Create a section (order must be unique within course) |
-| `GET` | `/section/course/:courseId` | 🔓 | — | Get all sections for a course |
+| `GET` | `/section/course/:courseId` | 👁️ | — | Get all sections for a course (Draft courses restricted to creator/admin) |
 | `GET` | `/section/creator/course/:courseId` | 🔑🛡️ | — | Get creator's sections for a course |
 | `GET` | `/section/creator/:id` | 🔑🛡️ | — | Get a specific section (creator view) |
-| `GET` | `/section/:id` | 🔓 | — | Get a section by ID |
+| `GET` | `/section/:id` | 👁️ | — | Get a section by ID (Draft courses restricted to creator/admin) |
 | `PATCH` | `/section/:id` | 🔑🛡️ | 10/min | Update a section (order conflict check on change) |
 | `DELETE` | `/section/:id` | 🔑🛡️ | 10/min | Delete a section and all its lessons |
 
@@ -314,10 +306,10 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `POST` | `/lesson/` | 🔑🛡️ | 10/min | Create a lesson (order must be unique within section) |
-| `GET` | `/lesson/section/:sectionId` | 👁️ | — | Get lessons for a section. Access-controlled: enrolled/creator/admin get all; others get preview-only, no `video` field |
+| `GET` | `/lesson/section/:sectionId` | 👁️ | — | Get all lesson metadata for a section. Media/video info is stripped for unauthorized lessons (e.g. guests/non-enrolled) |
 | `GET` | `/lesson/creator/section/:sectionId` | 🔑🛡️ | — | Get creator's lessons for a section |
 | `GET` | `/lesson/creator/:id` | 🔑🛡️ | — | Get a specific lesson (creator view) |
-| `GET` | `/lesson/:id` | 🔑 + `checkLessonAccess` | — | Get a lesson (strictly access-controlled by Admin → Creator → Preview → Enrolled chain) |
+| `GET` | `/lesson/:id` | 🔑 + `checkLessonAccess` | 60/min | Get a lesson (strictly access-controlled by Admin → Creator → Preview → Enrolled chain) |
 | `PATCH` | `/lesson/:id` | 🔑🛡️ | 10/min | Update a lesson (order conflict check on change) |
 | `DELETE` | `/lesson/:id` | 🔑🛡️ | 10/min | Delete a lesson |
 
@@ -330,7 +322,6 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `POST` | `/media/lesson/:lessonId/upload-url` | 🔑🛡️ | 15/min | Create a draft Media document and generate a presigned PUT URL for direct B2 upload |
 | `POST` | `/media/lesson/:lessonId/replace-url` | 🔑🛡️ | 15/min | Delete existing video, create new Media document, and generate a presigned PUT URL |
 | `POST` | `/media/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify upload on B2 (HeadObject + size check), finalize Media document, and associate with lesson |
-| `GET` | `/media/:id/download` | 🔑 | 30/min | Generate a presigned GET URL for a media file |
 | `DELETE` | `/media/:id` | 🔑 | 10/min | Delete media from B2 + MongoDB (uploader or ADMIN only) |
 | `POST` | `/media/:id/retry-transfer` | 🔑👑 | 5/min | Retry pending file transfers for a `COPY_PENDING` media (ADMIN only). Reads `failed-upload.log`, retries missing files, promotes to `READY` on success |
 

@@ -22,12 +22,12 @@ export const createCourse = async (req, res) => {
   const { success, data, error } = createCourseSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, price, category, level, status } = data;
+  const { title, description, price, level, status } = data;
   try {
     const newCourse = await Course.create({
       title, description,
       creator: req.user._id,
-      price, category, level,
+      price, level,
       status: "Draft",
     });
 
@@ -35,32 +35,6 @@ export const createCourse = async (req, res) => {
   } catch (err) {
     console.error("[createCourse] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to create course");
-  }
-};
-
-// GET ALL COURSES (paginated)
-export const getCourses = async (req, res) => {
-  try {
-    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
-    const cursor = req.query.cursor;
-    const category = req.query.category;
-    const level = req.query.level;
-    const status = req.query.status || "Published";
-
-    const query = { status };
-    if (category) query.category = category;
-    if (level) query.level = level;
-    if (cursor) query._id = { $lt: cursor };
-
-    const courses = await Course.find(query).populate("thumbnail").sort({ _id: -1 }).limit(limit + 1);
-    const hasNextPage = courses.length > limit;
-    const data = hasNextPage ? courses.slice(0, limit) : courses;
-    const nextCursor = hasNextPage ? data[data.length - 1]._id : null;
-
-    return successResponse(res, 200, "Courses fetched", { courses: data, nextCursor, hasNextPage });
-  } catch (err) {
-    console.error("[getCourses] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to fetch courses");
   }
 };
 
@@ -86,58 +60,6 @@ export const getMyCourses = async (req, res) => {
   } catch (err) {
     console.error("[getMyCourses] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to fetch courses");
-  }
-};
-
-// GET COURSE BY ID
-export const getCourseById = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
-    if (!course) return errorResponse(res, 404, "Course not found");
-    return successResponse(res, 200, "Course fetched", { course });
-  } catch (err) {
-    console.error("[getCourseById] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to fetch course");
-  }
-};
-
-// GET COURSE DETAILS (course + sections + lessons structured)
-export const getCourseDetails = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
-    if (!course) return errorResponse(res, 404, "Course not found");
-
-    const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
-    const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).populate("video").lean();
-
-    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator._id.toString() === req.user._id.toString());
-
-    const lessonsBySection = {};
-    for (const lesson of lessons) {
-      let finalLesson;
-      if (isCreator) {
-        finalLesson = lesson;
-      } else {
-        const { video, ...safeLesson } = lesson;
-        finalLesson = safeLesson;
-      }
-      const secId = finalLesson.section.toString();
-      if (!lessonsBySection[secId]) lessonsBySection[secId] = [];
-      lessonsBySection[secId].push(finalLesson);
-    }
-
-    const formattedSections = sections.map((sec) => ({
-      section: sec,
-      lessons: lessonsBySection[sec._id.toString()] || [],
-    }));
-
-    return successResponse(res, 200, "Course details fetched", { course, sections: formattedSections });
-  } catch (err) {
-    console.error("[getCourseDetails] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to fetch course details");
   }
 };
 
@@ -453,5 +375,3 @@ export const deleteThumbnail = async (req, res) => {
     return errorResponse(res, 500, "Failed to delete thumbnail");
   }
 };
-
-

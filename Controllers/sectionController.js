@@ -37,6 +37,14 @@ export const createSection = async (req, res) => {
 export const getSectionsByCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
+    const course = await Course.findById(courseId);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator.toString() === req.user._id.toString());
+    if (course.status !== "Published" && !isCreator) {
+      return errorResponse(res, 403, "This course is not published");
+    }
+
     const sections = await Section.find({ course: courseId }).sort({ order: 1 });
     return successResponse(res, 200, "Sections fetched", { sections });
   } catch (err) {
@@ -51,6 +59,15 @@ export const getSectionById = async (req, res) => {
     const { id } = req.params;
     const section = await Section.findById(id);
     if (!section) return errorResponse(res, 404, "Section not found");
+
+    const course = await Course.findById(section.course);
+    if (!course) return errorResponse(res, 404, "Associated course not found");
+
+    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator.toString() === req.user._id.toString());
+    if (course.status !== "Published" && !isCreator) {
+      return errorResponse(res, 403, "This course is not published");
+    }
+
     return successResponse(res, 200, "Section fetched", { section });
   } catch (err) {
     console.error("[getSectionById] Unexpected error:", err);

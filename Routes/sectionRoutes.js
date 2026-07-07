@@ -9,6 +9,7 @@ import {
   deleteSection,
 } from "../Controllers/sectionController.js";
 import { authenticate } from "../middlewares/authenticate.js";
+import { optionalAuthenticate } from "../middlewares/optionalAuthenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
@@ -23,7 +24,7 @@ router.post(
   createSection,
 );
 
-router.get("/course/:courseId", getSectionsByCourse);
+router.get("/course/:courseId", optionalAuthenticate, getSectionsByCourse);
 
 router.get(
   "/creator/course/:courseId",
@@ -39,7 +40,7 @@ router.get(
   getMySectionById,
 );
 
-router.get("/:id", getSectionById);
+router.get("/:id", optionalAuthenticate, getSectionById);
 
 router.patch(
   "/:id",

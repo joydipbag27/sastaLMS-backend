@@ -55,34 +55,40 @@ export const getLessonsBySection = async (req, res) => {
     const section = await Section.findById(sectionId);
     if (!section) return errorResponse(res, 404, "Section not found");
 
-    const allLessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).populate("video").lean();
-    const user = req.user;
-
-    // Admin: full access
-    if (user && user.role === "ADMIN") {
-      return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
-    }
-
-    // Creator of this course: full access
     const course = await Course.findById(section.course);
-    if (user && course && course.creator.toString() === user._id.toString()) {
+    if (!course) return errorResponse(res, 404, "Associated course not found");
+
+    const user = req.user;
+    const isCreator = user && (user.role === "ADMIN" || course.creator.toString() === user._id.toString());
+
+    if (course.status !== "Published" && !isCreator) {
+      return errorResponse(res, 403, "This course is not published");
+    }
+
+    const allLessons = await Lesson.find({ section: sectionId }).sort({ order: 1 }).populate("video").lean();
+
+    if (isCreator) {
       return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
     }
 
-    // Enrolled student: full access
-    if (user) {
-      const enrollment = await Enrollment.findOne({ user: user._id, course: section.course, status: "Active" });
+    let isEnrolled = false;
+    if (user && course.status === "Published") {
+      const enrollment = await Enrollment.findOne({ user: user._id, course: course._id, status: "Active" });
       if (enrollment) {
-        return successResponse(res, 200, "Lessons fetched", { lessons: allLessons });
+        isEnrolled = true;
       }
     }
 
-    // Not enrolled or unauthenticated: only preview lessons, no video field
-    const previewLessons = allLessons
-      .filter((l) => l.isPreview)
-      .map(({ video, ...rest }) => rest);
+    const formattedLessons = allLessons.map((lesson) => {
+      const hasMediaAccess = !!user && course.status === "Published" && (lesson.isPreview || isEnrolled);
+      if (!hasMediaAccess) {
+        const { video, ...rest } = lesson;
+        return rest;
+      }
+      return lesson;
+    });
 
-    return successResponse(res, 200, "Lessons fetched", { lessons: previewLessons });
+    return successResponse(res, 200, "Lessons fetched", { lessons: formattedLessons });
   } catch (err) {
     console.error("[getLessonsBySection] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to fetch lessons");

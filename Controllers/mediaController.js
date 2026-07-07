@@ -189,6 +189,10 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     const media = await Media.findById(data.mediaId);
     if (!media) return errorResponse(res, 404, "Media record not found");
 
+    if (req.user.role !== "ADMIN" && media.uploadedBy.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to confirm this media");
+    }
+
     const key = media._id.toString();
 
     // Verify file exists on S3 and size matches
@@ -293,42 +297,6 @@ export const getLessonPlaybackUrl = async (req, res) => {
   }
 };
 
-// GET /media/:id/download
-export const getMediaDownloadUrl = async (req, res) => {
-  const { id } = req.params;
-  if (!/^[a-f\d]{24}$/i.test(id))
-    return errorResponse(res, 400, "Invalid media ID");
-
-  try {
-    const media = await Media.findById(id);
-    if (!media) return errorResponse(res, 404, "Media not found");
-
-    let downloadUrl;
-    if (media.storageProvider === "AWS_S3") {
-      const command = new GetObjectCommand({
-        Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
-        Key: media._id.toString(),
-      });
-      downloadUrl = await getSignedUrl(awsS3Client, command, {
-        expiresIn: 3600,
-      });
-    } else {
-      const command = new GetObjectCommand({
-        Bucket: process.env.BUCKET_NAME,
-        Key: media._id.toString(),
-      });
-      downloadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    }
-
-    return successResponse(res, 200, "Download URL generated", { downloadUrl });
-  } catch (err) {
-    console.error(
-      "[getMediaDownloadUrl] Failed to generate presigned GET URL:",
-      err,
-    );
-    return errorResponse(res, 500, "Failed to generate download URL");
-  }
-};
 
 // DELETE /media/:id
 export const deleteMedia = async (req, res) => {
