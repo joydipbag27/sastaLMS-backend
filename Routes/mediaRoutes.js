@@ -1,12 +1,14 @@
 import express from "express";
 import {
   getLessonVideoUploadUrlS3,
-  getLessonVideoReplaceUrlS3,
   confirmLessonVideoUploadS3,
-  deleteMedia,
   mediaProcessCompleted,
   retryMediaTransfer,
 } from "../Controllers/mediaController.js";
+import {
+  createManualMedia,
+  verifyManualMedia,
+} from "../Controllers/manualMediaController.js";
 import { authenticate } from "../middlewares/authenticate.js";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
@@ -28,14 +30,6 @@ router.post(
 );
 
 router.post(
-  "/s3/lesson/:lessonId/replace-url",
-  customRateLimit(1, 15),
-  authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
-  getLessonVideoReplaceUrlS3,
-);
-
-router.post(
   "/s3/lesson/:lessonId/confirm",
   customRateLimit(1, 15),
   authenticate,
@@ -43,12 +37,20 @@ router.post(
   confirmLessonVideoUploadS3,
 );
 
-
-router.delete(
-  "/:id",
-  customRateLimit(1, 10),
+// Manual video upload/ingestion routes
+router.post(
+  "/manual",
+  customRateLimit(1, 15),
   authenticate,
-  deleteMedia,
+  authorize(roles.CREATOR, roles.ADMIN),
+  createManualMedia,
+);
+
+router.post(
+  "/manual/:mediaId/verify",
+  customRateLimit(1, 15),
+  authenticate,
+  verifyManualMedia,
 );
 
 // Admin-only: retry a COPY_PENDING media's failed file transfers

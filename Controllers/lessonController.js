@@ -155,10 +155,11 @@ export const deleteLesson = async (req, res) => {
     if (lesson.video) {
       const media = await Media.findById(lesson.video);
       if (media) {
-        if (media.storageProvider === "AWS_S3") {
+        if (media.storageProvider === "AWS_S3" || media.status !== "READY") {
           await deleteVideoFromS3(media._id.toString());
-        } else {
-          await permanentlyDeleteMultipleFromB2([media._id.toString()]);
+        }
+        if (media.storageProvider === "BACKBLAZE") {
+          await permanentlyDeleteMultipleFromB2([`videos/${media._id.toString()}/`]);
         }
         await media.deleteOne();
       }

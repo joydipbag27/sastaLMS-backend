@@ -190,10 +190,11 @@ export const deleteCourse = async (req, res) => {
       const b2Keys = [];
       const s3Keys = [];
       for (const media of medias) {
-        if (media.storageProvider === "AWS_S3") {
+        if (media.storageProvider === "AWS_S3" || media.status !== "READY") {
           s3Keys.push(media._id.toString());
-        } else {
-          b2Keys.push(media._id.toString());
+        }
+        if (media.storageProvider === "BACKBLAZE") {
+          b2Keys.push(`videos/${media._id.toString()}/`);
         }
       }
       if (b2Keys.length > 0) {

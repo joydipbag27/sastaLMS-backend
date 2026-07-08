@@ -12,12 +12,10 @@ const mediaSchema = new mongoose.Schema(
 
     mimeType: {
       type: String,
-      required: true,
     },
 
     size: {
       type: Number,
-      required: true,
     },
 
     status: {
@@ -63,6 +61,13 @@ const mediaSchema = new mongoose.Schema(
     duration: {
       type: Number,
       default: null,
+    },
+
+    ingestionMethod: {
+      type: String,
+      enum: ["AWS_PIPELINE", "MANUAL"],
+      default: "AWS_PIPELINE",
+      required: true,
     },
   },
   {

@@ -1,4 +1,4 @@
-import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import fs from "fs/promises";
 import path from "path";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -68,7 +68,7 @@ export const getLessonVideoUploadUrlS3 = async (req, res) => {
       size: 0,
       status: "UPLOADING",
       type: "VIDEO",
-      storageProvider: "AWS_S3",
+      storageProvider: "BACKBLAZE",
     });
 
     const key = media._id.toString();
@@ -89,78 +89,6 @@ export const getLessonVideoUploadUrlS3 = async (req, res) => {
   }
 };
 
-// POST /media/s3/lesson/:lessonId/replace-url
-export const getLessonVideoReplaceUrlS3 = async (req, res) => {
-  const { lessonId } = req.params;
-  const { success, data, error } = uploadUrlSchema.safeParse(req.body);
-  if (!success) return errorResponse(res, 400, error.issues[0].message);
-
-  try {
-    const lesson = await Lesson.findById(lessonId);
-    if (!lesson) return errorResponse(res, 404, "Lesson not found");
-
-    if (!lesson.video) {
-      return errorResponse(
-        res,
-        400,
-        "Lesson does not have a video to replace. Use the upload endpoint instead.",
-      );
-    }
-
-    const oldMediaId = lesson.video;
-    const oldMedia = await Media.findById(oldMediaId);
-    if (oldMedia) {
-      if (oldMedia.storageProvider === "AWS_S3") {
-        await deleteVideoFromS3(oldMediaId.toString());
-      } else {
-        await permanentlyDeleteMultipleFromB2([oldMediaId.toString()]);
-      }
-      await oldMedia.deleteOne();
-    }
-    lesson.video = null;
-    await lesson.save();
-
-    const course = await Course.findById(lesson.course);
-    if (!course) return errorResponse(res, 404, "Associated course not found");
-
-    if (
-      req.user.role !== "ADMIN" &&
-      course.creator.toString() !== req.user._id.toString()
-    ) {
-      return errorResponse(
-        res,
-        403,
-        "You do not have permission to modify this lesson",
-      );
-    }
-
-    // Create a draft Media document — its _id becomes the S3 key
-    const media = await Media.create({
-      uploadedBy: req.user._id,
-      mimeType: data.mimeType,
-      size: 0,
-      status: "UPLOADING",
-      type: "VIDEO",
-      storageProvider: "AWS_S3",
-    });
-
-    const key = media._id.toString();
-
-    // Generate AWS S3 presigned PUT URL
-    const { uploadUrl } = await generateVideoUploadUrlS3(key, data.mimeType);
-
-    return successResponse(res, 200, "Replace URL generated", {
-      uploadUrl,
-      mediaId: key,
-    });
-  } catch (err) {
-    console.error(
-      "[getLessonVideoReplaceUrlS3] Failed to generate presigned PUT URL:",
-      err,
-    );
-    return errorResponse(res, 500, "Failed to generate replace URL");
-  }
-};
 
 // POST /media/s3/lesson/:lessonId/confirm
 export const confirmLessonVideoUploadS3 = async (req, res) => {
@@ -298,40 +226,76 @@ export const getLessonPlaybackUrl = async (req, res) => {
 };
 
 
-// DELETE /media/:id
-export const deleteMedia = async (req, res) => {
-  const { id } = req.params;
-  if (!/^[a-f\d]{24}$/i.test(id))
-    return errorResponse(res, 400, "Invalid media ID");
 
-  try {
-    const media = await Media.findById(id);
-    if (!media) return errorResponse(res, 404, "Media not found");
+// Helper to finalize B2 validation, compute authoritative size/duration, validate MIME type, and mark READY
+const finalizeB2VerificationAndReady = async (media, jobId) => {
+  const mediaId = media._id.toString();
+  const bucket = process.env.BUCKET_NAME;
 
-    // Only uploader or ADMIN may delete
-    if (
-      req.user.role !== "ADMIN" &&
-      media.uploadedBy.toString() !== req.user._id.toString()
-    ) {
-      return errorResponse(
-        res,
-        403,
-        "You do not have permission to delete this media",
-      );
+  // 1. List B2 objects under videos/{mediaId}/ (handling pagination)
+  let isTruncated = true;
+  let continuationToken;
+  const b2Objects = [];
+  while (isTruncated) {
+    const listParams = {
+      Bucket: bucket,
+      Prefix: `videos/${mediaId}/`,
+      ContinuationToken: continuationToken,
+    };
+    const listResponse = await s3Client.send(new ListObjectsV2Command(listParams));
+    if (listResponse.Contents) {
+      b2Objects.push(...listResponse.Contents);
     }
-
-    if (media.storageProvider === "AWS_S3") {
-      await deleteVideoFromS3(media._id.toString());
-    } else {
-      await permanentlyDeleteMultipleFromB2([media._id.toString()]);
-    }
-    await media.deleteOne();
-
-    return successResponse(res, 200, "Media deleted successfully");
-  } catch (err) {
-    console.error("[deleteMedia] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to delete media");
+    isTruncated = listResponse.IsTruncated;
+    continuationToken = listResponse.NextContinuationToken;
   }
+
+  // 2. Verify master playlist exists and has correct Content-Type
+  const masterKey = `videos/${mediaId}/${mediaId}.m3u8`;
+  const objectKeys = new Set(b2Objects.map(obj => obj.Key));
+  if (!objectKeys.has(masterKey)) {
+    throw new Error(`Master playlist not found in B2: ${masterKey}`);
+  }
+
+  const headResponse = await s3Client.send(
+    new HeadObjectCommand({
+      Bucket: bucket,
+      Key: masterKey,
+    })
+  );
+
+  const rawContentType = headResponse.ContentType;
+  const normalizedMime = rawContentType
+    ?.toLowerCase()
+    .split(";")[0]
+    .trim();
+
+  if (normalizedMime !== "application/vnd.apple.mpegurl") {
+    throw new Error(`Invalid master playlist Content-Type: ${rawContentType}`);
+  }
+
+  // 3. Calculate total processed folder size
+  const calculatedFinalB2FolderSize = b2Objects.reduce((acc, obj) => acc + (obj.Size || 0), 0);
+
+  // 4. Calculate duration from S3 (existing approach)
+  const duration = await calculateHlsDurationFromS3(mediaId);
+
+  // 5. Update Media document atomically
+  media.status = "READY";
+  media.size = calculatedFinalB2FolderSize;
+  media.duration = duration;
+  media.mimeType = "application/vnd.apple.mpegurl";
+  if (jobId) {
+    media.jobId = jobId;
+  }
+  media.failedUploadLog = null;
+  media.copyAttempts = (media.copyAttempts ?? 0) + 1;
+  await media.save();
+
+  // 6. Sync duration with any associated Lesson documents
+  await Lesson.updateMany({ video: media._id }, { duration });
+
+  return media;
 };
 
 // Media process-complete by lambda
@@ -389,33 +353,9 @@ export const mediaProcessCompleted = async (req, res) => {
     }
 
     if (status === "COMPLETE") {
-      // 1. Automatically calculate and save the duration of the processed video
-      try {
-        const duration = await calculateHlsDurationFromS3(mediaId);
-        media.duration = duration;
-        await media.save();
-
-        // Sync the duration with any associated Lesson documents
-        await Lesson.updateMany({ video: media._id }, { duration });
-      } catch (durationErr) {
-        console.error(
-          `[mediaProcessCompleted] Failed to calculate video duration for mediaId ${mediaId}:`,
-          durationErr,
-        );
-        media.status = "FAILED";
-        media.error = durationErr.message || "Failed to calculate video duration";
-        media.jobId = jobId;
-        await media.save();
-        return errorResponse(
-          res,
-          500,
-          durationErr.message || "Failed to calculate video duration",
-        );
-      }
-
       let transferResult;
       try {
-        // 2. Run the rclone transfer pipeline (multi-round, fault-tolerant)
+        // 1. Run the rclone transfer pipeline (multi-round, fault-tolerant)
         transferResult = await transferHlsToB2(mediaId);
       } catch (transferErr) {
         // A hard error here means rclone couldn't even start or S3 listing
@@ -431,18 +371,25 @@ export const mediaProcessCompleted = async (req, res) => {
         return errorResponse(res, 500, "HLS transfer pipeline failed");
       }
 
-      // 2. Delete S3 objects that are CONFIRMED present in B2.
-      //    Objects in transferResult.failedKeys are intentionally left in S3.
-      await deleteConfirmedS3Objects(mediaId, transferResult.copiedKeys);
-
       if (transferResult.status === "READY") {
-        // All objects copied — delete the original input video and mark READY.
-        await deleteS3InputVideo(mediaId);
+        // 2. Authoritative validation and updates from final B2 output
+        try {
+          await finalizeB2VerificationAndReady(media, jobId);
+        } catch (readyErr) {
+          console.error(
+            `[mediaProcessCompleted] B2 verification/finalize failed for mediaId ${mediaId}:`,
+            readyErr,
+          );
+          return errorResponse(
+            res,
+            500,
+            `B2 verification failed: ${readyErr.message}`,
+          );
+        }
 
-        media.status = "READY";
-        media.jobId = jobId;
-        media.copyAttempts = (media.copyAttempts ?? 0) + 1;
-        await media.save();
+        // 3. Cleanup S3 files only after database update succeeds
+        await deleteConfirmedS3Objects(mediaId, transferResult.copiedKeys);
+        await deleteS3InputVideo(mediaId);
 
         return successResponse(
           res,
@@ -466,6 +413,9 @@ export const mediaProcessCompleted = async (req, res) => {
       media.failedUploadLog = transferResult.logPath;
       media.copyAttempts = (media.copyAttempts ?? 0) + 1;
       await media.save();
+
+      // Delete only what was successfully copied to B2
+      await deleteConfirmedS3Objects(mediaId, transferResult.copiedKeys);
 
       return successResponse(
         res,
@@ -523,18 +473,25 @@ export const retryMediaTransfer = async (req, res) => {
       return errorResponse(res, 500, "Transfer retry pipeline failed");
     }
 
-    // Delete any S3 objects that are now confirmed in B2
-    await deleteConfirmedS3Objects(id, transferResult.copiedKeys);
-
-    media.copyAttempts = (media.copyAttempts ?? 0) + 1;
-
     if (transferResult.status === "READY") {
-      // Full recovery — delete the original input video and mark READY
-      await deleteS3InputVideo(id);
+      // 1. Authoritative validation and updates from final B2 output
+      try {
+        await finalizeB2VerificationAndReady(media);
+      } catch (readyErr) {
+        console.error(
+          `[retryMediaTransfer] B2 verification/finalize failed for mediaId ${id}:`,
+          readyErr,
+        );
+        return errorResponse(
+          res,
+          500,
+          `B2 verification failed during retry: ${readyErr.message}`,
+        );
+      }
 
-      media.status = "READY";
-      media.failedUploadLog = null;
-      await media.save();
+      // 2. Cleanup S3 files only after database update succeeds
+      await deleteConfirmedS3Objects(id, transferResult.copiedKeys);
+      await deleteS3InputVideo(id);
 
       return successResponse(
         res,
@@ -547,7 +504,11 @@ export const retryMediaTransfer = async (req, res) => {
     // Still partially pending
     media.status = "COPY_PENDING";
     media.failedUploadLog = transferResult.logPath;
+    media.copyAttempts = (media.copyAttempts ?? 0) + 1;
     await media.save();
+
+    // Delete only what was successfully copied to B2
+    await deleteConfirmedS3Objects(id, transferResult.copiedKeys);
 
     return successResponse(
       res,

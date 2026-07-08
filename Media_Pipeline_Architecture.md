@@ -1,6 +1,6 @@
 # veoLMS Media Processing & Streaming Pipeline
 
-**Version:** 2.0\
+**Version:** 3.0\
 **Purpose:** Explain the complete video pipeline from upload to playback
 in simple English.
 
@@ -22,6 +22,7 @@ The design has four goals:
 
 # 2. Big Picture
 
+### Option A: AWS MediaConvert Pipeline (Transcoded automatically via AWS)
 ``` text
 Creator
    │
@@ -44,16 +45,13 @@ EventBridge
 Lambda
    │
    ▼
-Backend
-   │
-   ▼
-rclone
+Backend (rclone copy to B2)
    │
    ▼
 Backblaze B2 (Private)
    │
    ▼
-Cloudflare Worker
+Cloudflare Worker (Verification & Delivery)
    │
    ▼
 Worker Cache
@@ -62,11 +60,38 @@ Worker Cache
 HLS.js Player
 ```
 
-Every box has only one responsibility.
+### Option B: Manual Ingestion Pipeline (Processed locally, bypassing AWS)
+``` text
+Creator / Admin
+   │
+   ▼
+Create Manual Media Metadata (POST /media/manual)
+   │
+   ▼
+Transcode locally (FFmpeg HLS 360p + 720p)
+   │
+   ▼
+Upload directory to Backblaze B2 (using rclone)
+   │
+   ▼
+Verify B2 Media (POST /media/manual/:mediaId/verify)
+   │
+   ▼
+Backblaze B2 (Private)
+   │
+   ▼
+Cloudflare Worker (Delivery)
+   │
+   ▼
+Worker Cache
+   │
+   ▼
+HLS.js Player
+```
 
 ------------------------------------------------------------------------
 
-# 3. Upload Phase
+# 3. Upload Phase (AWS Pipeline Only)
 
 ## Why direct upload?
 
@@ -82,7 +107,7 @@ Request Upload URL
    ▼
 Backend
    │
-Generate Presigned URL
+   Generate Presigned URL
    │
    ▼
 Upload directly to S3
@@ -99,7 +124,7 @@ continuing.
 
 ------------------------------------------------------------------------
 
-# 4. MediaConvert
+# 4. MediaConvert (AWS Pipeline Only)
 
 MediaConvert converts one uploaded video into an HLS package.
 
@@ -129,7 +154,7 @@ This reduces processing cost considerably.
 
 ------------------------------------------------------------------------
 
-# 5. Event Driven Processing
+# 5. Event Driven Processing (AWS Pipeline Only)
 
 The backend never polls MediaConvert.
 
@@ -152,7 +177,7 @@ This is called an event-driven architecture.
 
 ------------------------------------------------------------------------
 
-# 6. Copy Pipeline
+# 6. Copy Pipeline (AWS Pipeline Only)
 
 MediaConvert stores generated files inside an S3 output bucket.
 
@@ -160,11 +185,11 @@ Those files are temporary.
 
 ``` text
 S3 Output
-    │
-    ▼
+     │
+     ▼
 rclone
-    │
-    ▼
+     │
+     ▼
 Private Backblaze B2
 ```
 
@@ -186,7 +211,7 @@ rclone already solves these problems by providing:
 
 ------------------------------------------------------------------------
 
-# 7. Fault Tolerance
+# 7. Fault Tolerance (AWS Pipeline Only)
 
 ``` text
 Copy Files
@@ -195,7 +220,7 @@ Copy Files
 Success?
  ┌──┴──┐
  │     │
-Yes   No
+ Yes   No
  │     │
  ▼     ▼
 READY Retry
@@ -215,16 +240,27 @@ MediaConvert is never executed again because of transfer failures.
 
 ------------------------------------------------------------------------
 
-# 8. Verification
+# 8. Verification & Metadata Ingestion
 
-Before deleting S3 files the backend verifies that every expected object
-exists in Backblaze B2.
+Before marking media as playable, the backend verifies B2 presence.
 
-Only then:
+### AWS Pipeline Verification
+- Confirms `rclone` finishes uploading all files.
+- Lists all B2 objects under `videos/{mediaId}/`.
+- Confirms the master playlist file `videos/{mediaId}/{mediaId}.m3u8` exists and has Content-Type `application/vnd.apple.mpegurl`.
+- Calculates total folder size dynamically by summing up sizes of all listed objects in B2.
+- Calculates duration from the S3 playlist.
+- Atomically updates Media status to `READY`, size, duration, and mimeType to `application/vnd.apple.mpegurl`.
+- Cleans up temporary files in S3.
 
--   Delete S3 Output
--   Delete original upload
--   Mark media READY
+### Manual Pipeline Verification
+- Confirms playlists exist (`{mediaId}.m3u8`, `{mediaId}_360p.m3u8`, `{mediaId}_720p.m3u8`).
+- Fetches playlists and verifies structure (segments exist, valid `EXTINF` duration entries).
+- Rejects any external, absolute, or traversing path references.
+- Validates the Content-Type of playlists (`application/vnd.apple.mpegurl`) and segments (`video/mp2t`) on B2.
+- Calculates folder size dynamically by summing all object sizes under the prefix.
+- Calculates duration from the 720p HLS variant.
+- Updates Media status to `READY`, size, duration, and mimeType to `application/vnd.apple.mpegurl`.
 
 ------------------------------------------------------------------------
 
@@ -335,7 +371,7 @@ Segment Request
 Cache Match?
  ┌────┴────┐
  │         │
-HIT       MISS
+ HIT       MISS
  │         │
  ▼         ▼
 Return   Fetch B2
@@ -386,29 +422,24 @@ No backend logic is needed.
 # 16. Media State Machine
 
 ``` text
-UPLOADING
-    │
-    ▼
-PROCESSING
-    │
-    ▼
-COPYING
-    │
-    ▼
-READY
+UPLOADING / PROCESSING (Pending state)
+     │
+     ▼
+READY (Verified and playable)
 ```
 
-Failure:
+Failure / Retries (AWS Only):
 
 ``` text
-COPY_PENDING
+COPY_PENDING / FAILED
 ```
 
 ------------------------------------------------------------------------
 
 # 17. Cost Optimizations
 
--   Only two renditions.
+-   Option for Manual local transcoding and upload to Backblaze B2, avoiding AWS compute costs.
+-   Only two HLS renditions.
 -   Backblaze B2 for low-cost storage.
 -   Cloudflare Worker for secure delivery.
 -   Worker Cache for repeated requests.
@@ -421,43 +452,28 @@ COPY_PENDING
 
 -   Node.js
 -   Express
--   MongoDB
--   AWS S3
--   MediaConvert
--   EventBridge
--   Lambda
+-   MongoDB (Mongoose)
+-   AWS S3 & MediaConvert
+-   EventBridge & Lambda
 -   rclone
 -   Backblaze B2
 -   Cloudflare Workers
 -   HLS.js
+-   FFmpeg
 
 ------------------------------------------------------------------------
 
 # 19. Lessons Learned
 
--   Upload directly to S3.
+-   Upload directly to S3 or B2.
 -   Keep the bucket private.
--   Verify files before deleting originals.
+-   Verify files before deleting S3 originals.
 -   Never rerun MediaConvert for copy failures.
 -   Cache immutable video segments.
 -   Keep the Worker focused on media delivery only.
 
 ------------------------------------------------------------------------
 
-# 20. Future Improvements
-
--   DRM
--   Subtitles
--   Analytics
--   Progress tracking
--   Multi-audio
--   Thumbnail CDN
-
-------------------------------------------------------------------------
-
 # Conclusion
 
-The veoLMS media pipeline combines AWS processing, Backblaze storage,
-Cloudflare edge delivery and HLS streaming into a secure, reliable and
-cost-optimized system. Each component has a single responsibility,
-making the architecture easier to understand, maintain and extend.
+The veoLMS media pipeline provides two ingestion paths—automated AWS MediaConvert and low-cost manual FFmpeg+rclone—converging at the same Backblaze B2 storage structure and Cloudflare Worker playback flow. This ensures cost-efficiency, flexibility, and architectural clean separation.
