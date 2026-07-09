@@ -3,7 +3,7 @@ import Section from "../Models/sectionModel.js";
 import Lesson from "../Models/lessonModel.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
-// GET ALL COURSES (paginated, simplified with no category/level/status filters, only published)
+// GET ALL COURSES (paginated, published only)
 export const getCourses = async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 10, 50);
@@ -28,7 +28,7 @@ export const getCourses = async (req, res) => {
 export const getCourseById = async (req, res) => {
   try {
     const { id } = req.params;
-    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
+    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail").populate("trailer");
     if (!course) return errorResponse(res, 404, "Course not found");
 
     const isCreator = req.user && (req.user.role === "ADMIN" || course.creator._id.toString() === req.user._id.toString());
@@ -48,7 +48,7 @@ export const getCourseDetails = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail");
+    const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail").populate("trailer");
     if (!course) return errorResponse(res, 404, "Course not found");
 
     const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();

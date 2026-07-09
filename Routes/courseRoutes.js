@@ -9,6 +9,9 @@ import {
   getThumbnailUploadUrl,
   confirmThumbnail,
   deleteThumbnail,
+  getTrailerUploadUrl,
+  confirmTrailer,
+  deleteTrailer,
 } from "../Controllers/courseCreatorController.js";
 import {
   getCourses,
@@ -81,6 +84,30 @@ router.delete(
   authenticate,
   authorize(roles.CREATOR, roles.ADMIN),
   deleteThumbnail,
+);
+
+router.post(
+  "/:id/trailer/upload-url",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  getTrailerUploadUrl,
+);
+
+router.post(
+  "/:id/trailer/confirm",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  confirmTrailer,
+);
+
+router.delete(
+  "/:id/trailer",
+  customRateLimit(1, 10),
+  authenticate,
+  authorize(roles.CREATOR, roles.ADMIN),
+  deleteTrailer,
 );
 
 router.post(

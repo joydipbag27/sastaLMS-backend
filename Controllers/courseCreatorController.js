@@ -8,6 +8,8 @@ import {
   updateCourseSchema,
   thumbnailUploadUrlSchema,
   confirmThumbnailSchema,
+  trailerUploadUrlSchema,
+  confirmTrailerSchema,
 } from "../validators/courseSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
@@ -15,6 +17,9 @@ import {
   generateThumbnailUploadUrl,
   deleteThumbnailFromS3,
   getThumbnailMetadata,
+  generateTrailerUploadUrl,
+  deleteTrailerFromS3,
+  getTrailerMetadata,
 } from "../config/awsS3Client.js";
 
 // CREATE COURSE
@@ -22,12 +27,15 @@ export const createCourse = async (req, res) => {
   const { success, data, error } = createCourseSchema.safeParse(req.body);
   if (!success) return errorResponse(res, 400, error.issues[0].message);
 
-  const { title, description, price, level, status } = data;
+  const { title, displayName, description, price, level, status } = data;
   try {
     const newCourse = await Course.create({
-      title, description,
+      title,
+      displayName,
+      description,
       creator: req.user._id,
-      price, level,
+      price,
+      level,
       status: "Draft",
     });
 
@@ -180,6 +188,12 @@ export const deleteCourse = async (req, res) => {
     if (course.thumbnail) {
       await deleteThumbnailFromS3(course.thumbnail.toString());
       await Media.findByIdAndDelete(course.thumbnail);
+    }
+
+    // Cascade-delete associated trailer (if any) from S3 and MongoDB
+    if (course.trailer) {
+      await deleteTrailerFromS3(course.trailer.toString());
+      await Media.findByIdAndDelete(course.trailer);
     }
 
     // Cascade-delete associated Media (videos) from storage and MongoDB.
@@ -365,5 +379,163 @@ export const deleteThumbnail = async (req, res) => {
   } catch (err) {
     console.error("[deleteThumbnail] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to delete thumbnail");
+  }
+};
+
+// GET TRAILER UPLOAD URL
+export const getTrailerUploadUrl = async (req, res) => {
+  const { id } = req.params;
+  const { success, data, error } = trailerUploadUrlSchema.safeParse(req.body);
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
+
+  const { mimeType } = data;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to modify this course");
+    }
+
+    // Create a Media document in DB with UPLOADING status, type VIDEO, storageProvider AWS_S3 (since trailer stays in S3 public bucket)
+    const media = await Media.create({
+      uploadedBy: req.user._id,
+      mimeType,
+      size: 0,
+      status: "UPLOADING",
+      type: "VIDEO",
+      storageProvider: "AWS_S3",
+    });
+
+    const mediaId = media._id.toString();
+
+    // Generate AWS S3 presigned PUT URL using the mediaId as key under course-trailers/
+    const { uploadUrl } = await generateTrailerUploadUrl(mediaId, mimeType);
+
+    return successResponse(res, 200, "Trailer upload URL generated successfully", {
+      uploadUrl,
+      mediaId,
+    });
+  } catch (err) {
+    console.error("[getTrailerUploadUrl] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to generate upload URL");
+  }
+};
+
+// CONFIRM TRAILER
+export const confirmTrailer = async (req, res) => {
+  const { id } = req.params;
+  const { success, data, error } = confirmTrailerSchema.safeParse(req.body);
+  if (!success) return errorResponse(res, 400, error.issues[0].message);
+
+  const { mediaId } = data;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to modify this course");
+    }
+
+    const media = await Media.findById(mediaId);
+    if (!media) return errorResponse(res, 404, "Media document not found");
+
+    if (media.uploadedBy.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to confirm this media");
+    }
+
+    if (media.status !== "UPLOADING") {
+      return errorResponse(res, 400, "Media is not in UPLOADING status");
+    }
+
+    // Call S3 to check object existence and properties
+    let metadata;
+    try {
+      metadata = await getTrailerMetadata(mediaId);
+    } catch (err) {
+      console.error("[confirmTrailer] File lookup failed on S3. Cleaning up:", err);
+      await deleteTrailerFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "File does not exist on storage");
+    }
+
+    // Verify size limit: 100 MB maximum for trailers (larger than thumbnails)
+    const maxLimit = 100 * 1024 * 1024;
+    if (metadata.contentLength > maxLimit) {
+      console.error(`[confirmTrailer] Size limit exceeded: ${metadata.contentLength} bytes`);
+      await deleteTrailerFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "File size exceeds the 50 MB maximum limit");
+    }
+
+    // Verify contentType is allowed
+    const allowedMimeTypes = ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska"];
+    if (!allowedMimeTypes.includes(metadata.contentType)) {
+      console.error(`[confirmTrailer] Mime type not allowed: ${metadata.contentType}`);
+      await deleteTrailerFromS3(mediaId);
+      await media.deleteOne();
+      return errorResponse(res, 400, "Invalid video format on storage");
+    }
+
+    // Update Media fields
+    media.size = metadata.contentLength;
+    media.mimeType = metadata.contentType;
+    media.status = "READY";
+    await media.save();
+
+    // Associate media with course & clean up old trailer/S3 object if replacement occurs
+    const previousTrailerId = course.trailer;
+    course.trailer = media._id;
+    await course.save();
+
+    if (previousTrailerId && previousTrailerId.toString() !== media._id.toString()) {
+      const oldMedia = await Media.findById(previousTrailerId);
+      if (oldMedia) {
+        await deleteTrailerFromS3(previousTrailerId.toString());
+        await oldMedia.deleteOne();
+      }
+    }
+
+    const updatedCourse = await Course.findById(id).populate("thumbnail").populate("trailer").populate("creator", "username email");
+    return successResponse(res, 200, "Trailer upload confirmed successfully", { course: updatedCourse });
+  } catch (err) {
+    console.error("[confirmTrailer] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to confirm trailer upload");
+  }
+};
+
+// DELETE TRAILER
+export const deleteTrailer = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const course = await Course.findById(id);
+    if (!course) return errorResponse(res, 404, "Course not found");
+
+    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+      return errorResponse(res, 403, "You do not have permission to delete this trailer");
+    }
+
+    const trailerId = course.trailer;
+    if (!trailerId) {
+      return successResponse(res, 200, "Course has no trailer to delete");
+    }
+
+    // Delete S3 object
+    await deleteTrailerFromS3(trailerId.toString());
+
+    // Delete Media document
+    await Media.findByIdAndDelete(trailerId);
+
+    // Set course.trailer = null
+    course.trailer = null;
+    await course.save();
+
+    return successResponse(res, 200, "Trailer deleted successfully");
+  } catch (err) {
+    console.error("[deleteTrailer] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to delete trailer");
   }
 };

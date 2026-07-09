@@ -6,6 +6,11 @@ export const createCourseSchema = z.object({
     .trim()
     .min(3, "Title must be at least 3 characters")
     .max(100, "Title cannot exceed 100 characters"),
+  displayName: z
+    .string()
+    .trim()
+    .max(100, "Display name cannot exceed 100 characters")
+    .optional(),
   description: z
     .string()
     .trim()
@@ -30,4 +35,16 @@ export const thumbnailUploadUrlSchema = z.object({
 export const confirmThumbnailSchema = z.object({
   mediaId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid media ID"),
 });
+
+export const trailerUploadUrlSchema = z.object({
+  mimeType: z.enum(
+    ["video/mp4", "video/webm", "video/quicktime", "video/x-matroska"],
+    { errorMap: () => ({ message: "Only video/mp4, video/webm, video/quicktime, and video/x-matroska are allowed" }) }
+  ),
+});
+
+export const confirmTrailerSchema = z.object({
+  mediaId: z.string().regex(/^[a-f\d]{24}$/i, "Invalid media ID"),
+});
+
 

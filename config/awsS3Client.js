@@ -57,6 +57,46 @@ export const getThumbnailMetadata = async (mediaId) => {
   };
 };
 
+export const generateTrailerUploadUrl = async (mediaId, mimeType) => {
+  const objectKey = `course-trailers/${mediaId}`;
+  const command = new PutObjectCommand({
+    Bucket: process.env.AWS_THUMBNAIL_BUCKET,
+    Key: objectKey,
+    ContentType: mimeType,
+  });
+  const uploadUrl = await getSignedUrl(awsS3Client, command, {
+    expiresIn: 3600,
+  });
+  return { uploadUrl, objectKey };
+};
+
+export const deleteTrailerFromS3 = async (mediaId) => {
+  const objectKey = `course-trailers/${mediaId}`;
+  try {
+    await awsS3Client.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.AWS_THUMBNAIL_BUCKET,
+        Key: objectKey,
+      }),
+    );
+  } catch (err) {
+    console.error(`Failed to delete trailer ${objectKey} from S3:`, err);
+  }
+};
+
+export const getTrailerMetadata = async (mediaId) => {
+  const objectKey = `course-trailers/${mediaId}`;
+  const command = new HeadObjectCommand({
+    Bucket: process.env.AWS_THUMBNAIL_BUCKET,
+    Key: objectKey,
+  });
+  const metadata = await awsS3Client.send(command);
+  return {
+    contentType: metadata.ContentType,
+    contentLength: metadata.ContentLength,
+  };
+};
+
 export const generateVideoUploadUrlS3 = async (mediaId, mimeType) => {
   const command = new PutObjectCommand({
     Bucket: process.env.MEDIACONVERT_INPUT_BUCKET,
