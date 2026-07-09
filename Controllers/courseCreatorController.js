@@ -2,6 +2,7 @@ import Course from "../Models/courseModel.js";
 import Section from "../Models/sectionModel.js";
 import Lesson from "../Models/lessonModel.js";
 import Media from "../Models/mediaModel.js";
+import LessonProgress from "../Models/lessonProgressModel.js";
 import {
   createCourseSchema,
   updateCourseSchema,
@@ -193,8 +194,13 @@ export const deleteCourse = async (req, res) => {
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
-    await Lesson.deleteMany({ course: id });
-    await Section.deleteMany({ course: id });
+    // Delete lessons, sections, and all lesson progress records concurrently
+    // (all three are independent bulk operations scoped to the same course).
+    await Promise.all([
+      Lesson.deleteMany({ course: id }),
+      Section.deleteMany({ course: id }),
+      LessonProgress.deleteMany({ course: id }),
+    ]);
     await course.deleteOne();
 
     return successResponse(res, 200, "Course and all associated data deleted successfully");

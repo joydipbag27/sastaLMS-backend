@@ -2,6 +2,7 @@ import Section from "../Models/sectionModel.js";
 import Course from "../Models/courseModel.js";
 import Lesson from "../Models/lessonModel.js";
 import Media from "../Models/mediaModel.js";
+import LessonProgress from "../Models/lessonProgressModel.js";
 import { createSectionSchema, updateSectionSchema } from "../validators/sectionSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
@@ -138,7 +139,11 @@ export const deleteSection = async (req, res) => {
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
-    await Lesson.deleteMany({ section: id });
+    // Delete lessons and all their progress records concurrently (both scoped to this section).
+    await Promise.all([
+      Lesson.deleteMany({ section: id }),
+      LessonProgress.deleteMany({ section: id }),
+    ]);
     await section.deleteOne();
 
     // Atomically decrement sectionCount and lessonCount on the parent course.

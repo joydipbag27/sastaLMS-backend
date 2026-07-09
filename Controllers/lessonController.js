@@ -3,6 +3,7 @@ import Section from "../Models/sectionModel.js";
 import Course from "../Models/courseModel.js";
 import Media from "../Models/mediaModel.js";
 import Enrollment from "../Models/enrollmentModel.js";
+import LessonProgress from "../Models/lessonProgressModel.js";
 import { createLessonSchema, updateLessonSchema } from "../validators/lessonSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
@@ -169,6 +170,9 @@ export const deleteLesson = async (req, res) => {
     }
 
     await lesson.deleteOne();
+
+    // Delete all progress records for this lesson across all enrolled users.
+    await LessonProgress.deleteMany({ lesson: id });
 
     // Atomically decrement the denormalized lesson counter on the parent course.
     // lesson.course is available from the document fetched at the start of this handler.
