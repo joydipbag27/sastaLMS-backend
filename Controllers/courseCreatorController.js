@@ -9,12 +9,11 @@ import {
   confirmThumbnailSchema,
 } from "../validators/courseSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
-import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
+import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
 import {
   generateThumbnailUploadUrl,
   deleteThumbnailFromS3,
   getThumbnailMetadata,
-  deleteVideoFromS3,
 } from "../config/awsS3Client.js";
 
 // CREATE COURSE
@@ -182,29 +181,15 @@ export const deleteCourse = async (req, res) => {
       await Media.findByIdAndDelete(course.thumbnail);
     }
 
-    // Cascade-delete associated Media (videos) from storage and MongoDB
+    // Cascade-delete associated Media (videos) from storage and MongoDB.
+    // deleteMediaFromStorage handles every pipeline state:
+    // READY (B2), COPY_PENDING (B2 + S3 output), PROCESSING (S3 input + output), UPLOADING/FAILED (S3 input).
     const lessons = await Lesson.find({ course: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
     if (mediaIds.length > 0) {
       const medias = await Media.find({ _id: { $in: mediaIds } });
-      const b2Keys = [];
-      const s3Keys = [];
-      for (const media of medias) {
-        if (media.storageProvider === "AWS_S3" || media.status !== "READY") {
-          s3Keys.push(media._id.toString());
-        }
-        if (media.storageProvider === "BACKBLAZE") {
-          b2Keys.push(`videos/${media._id.toString()}/`);
-        }
-      }
-      if (b2Keys.length > 0) {
-        await permanentlyDeleteMultipleFromB2(b2Keys);
-      }
-      if (s3Keys.length > 0) {
-        for (const key of s3Keys) {
-          await deleteVideoFromS3(key);
-        }
-      }
+      // Delete all video storage artefacts concurrently
+      await Promise.all(medias.map((media) => deleteMediaFromStorage(media)));
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 

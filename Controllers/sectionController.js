@@ -4,8 +4,7 @@ import Lesson from "../Models/lessonModel.js";
 import Media from "../Models/mediaModel.js";
 import { createSectionSchema, updateSectionSchema } from "../validators/sectionSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
-import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
-import { deleteVideoFromS3 } from "../config/awsS3Client.js";
+import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
 
 // CREATE SECTION
 export const createSection = async (req, res) => {
@@ -26,6 +25,13 @@ export const createSection = async (req, res) => {
     if (orderConflict) return errorResponse(res, 409, `A section with order ${order} already exists in this course`);
 
     const newSection = await Section.create({ title, description, course, order });
+
+    // Atomically increment the denormalized section counter on the course
+    await Course.updateOne(
+      { _id: course },
+      { $inc: { "stats.sectionCount": 1 } }
+    );
+
     return successResponse(res, 201, "Section created successfully", { section: newSection });
   } catch (err) {
     console.error("[createSection] Unexpected error:", err);
@@ -120,34 +126,35 @@ export const deleteSection = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this section");
     }
 
-    // Cascade-delete associated Media from storage and MongoDB
+    // Cascade-delete associated Media from storage and MongoDB.
+    // deleteMediaFromStorage handles every pipeline state per media document:
+    // READY (B2), COPY_PENDING (B2 + S3 output), PROCESSING (S3 input + output), UPLOADING/FAILED (S3 input).
     const lessons = await Lesson.find({ section: id }).select("video").lean();
     const mediaIds = lessons.map((l) => l.video).filter(Boolean);
     if (mediaIds.length > 0) {
       const medias = await Media.find({ _id: { $in: mediaIds } });
-      const b2Keys = [];
-      const s3Keys = [];
-      for (const media of medias) {
-        if (media.storageProvider === "AWS_S3" || media.status !== "READY") {
-          s3Keys.push(media._id.toString());
-        }
-        if (media.storageProvider === "BACKBLAZE") {
-          b2Keys.push(`videos/${media._id.toString()}/`);
-        }
-      }
-      if (b2Keys.length > 0) {
-        await permanentlyDeleteMultipleFromB2(b2Keys);
-      }
-      if (s3Keys.length > 0) {
-        for (const key of s3Keys) {
-          await deleteVideoFromS3(key);
-        }
-      }
+      // Delete storage artefacts for all lesson videos concurrently
+      await Promise.all(medias.map((media) => deleteMediaFromStorage(media)));
       await Media.deleteMany({ _id: { $in: mediaIds } });
     }
 
     await Lesson.deleteMany({ section: id });
     await section.deleteOne();
+
+    // Atomically decrement sectionCount and lessonCount on the parent course.
+    // lessonCount is decremented by the number of lessons that belonged to this section
+    // (already determined above before deletion).
+    const lessonCountDecrement = lessons.length;
+    await Course.updateOne(
+      { _id: section.course },
+      {
+        $inc: {
+          "stats.sectionCount": -1,
+          "stats.lessonCount": -lessonCountDecrement,
+        },
+      }
+    );
+
     return successResponse(res, 200, "Section and all associated lessons deleted successfully");
   } catch (err) {
     console.error("[deleteSection] Unexpected error:", err);

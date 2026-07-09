@@ -41,6 +41,19 @@ const courseSchema = new mongoose.Schema(
       enum: ["Draft", "Published"],
       default: "Draft",
     },
+
+    stats: {
+      sectionCount: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+      lessonCount: {
+        type: Number,
+        default: 0,
+        min: 0,
+      },
+    },
   },
   {
     timestamps: true,

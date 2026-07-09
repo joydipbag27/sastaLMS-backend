@@ -4,6 +4,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectVersionsCommand,
+  ListObjectsV2Command,
   DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -151,3 +152,77 @@ export const permanentlyDeleteMultipleFromS3 = async (keys) => {
     console.error("Failed to delete objects from S3:", err);
   }
 };
+
+/**
+ * Deletes all HLS output files for a given mediaId from the MediaConvert
+ * OUTPUT bucket (e.g. videos/{mediaId}/*.m3u8, *.ts segments, etc.).
+ *
+ * The output bucket is a standard (non-versioned) bucket written to by
+ * MediaConvert. We list with ListObjectsV2Command and batch-delete.
+ *
+ * Called when a video in PROCESSING or COPY_PENDING state is deleted,
+ * because MediaConvert may already have written output that was not yet
+ * transferred to B2.
+ *
+ * @param {string} mediaId
+ * @returns {Promise<void>}
+ */
+export const deleteHlsOutputFromS3 = async (mediaId) => {
+  const outputBucket = process.env.MEDIACONVERT_OUTPUT_BUCKET;
+  if (!outputBucket) {
+    console.warn("[deleteHlsOutputFromS3] MEDIACONVERT_OUTPUT_BUCKET is not set — skipping output cleanup");
+    return;
+  }
+
+  const prefix = `videos/${mediaId}/`;
+  let continuationToken;
+  const objectsToDelete = [];
+
+  // Paginate through all objects under the prefix
+  do {
+    let response;
+    try {
+      response = await awsS3Client.send(
+        new ListObjectsV2Command({
+          Bucket: outputBucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
+    } catch (err) {
+      console.error(`[deleteHlsOutputFromS3] Failed to list output bucket for mediaId ${mediaId}:`, err);
+      return;
+    }
+
+    if (response.Contents) {
+      for (const obj of response.Contents) {
+        objectsToDelete.push({ Key: obj.Key });
+      }
+    }
+
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  if (objectsToDelete.length === 0) {
+    return; // Nothing to delete — output not yet written, or already cleaned up
+  }
+
+  // Batch-delete in chunks of 1000 (S3 API limit)
+  for (let i = 0; i < objectsToDelete.length; i += 1000) {
+    const chunk = objectsToDelete.slice(i, i + 1000);
+    try {
+      await awsS3Client.send(
+        new DeleteObjectsCommand({
+          Bucket: outputBucket,
+          Delete: { Objects: chunk, Quiet: true },
+        })
+      );
+    } catch (err) {
+      console.error(`[deleteHlsOutputFromS3] Failed to delete output chunk for mediaId ${mediaId}:`, err);
+    }
+  }
+
+  console.log(`[deleteHlsOutputFromS3] Deleted ${objectsToDelete.length} output objects for mediaId ${mediaId}`);
+};
+
+

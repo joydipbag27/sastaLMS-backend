@@ -5,8 +5,7 @@ import Media from "../Models/mediaModel.js";
 import Enrollment from "../Models/enrollmentModel.js";
 import { createLessonSchema, updateLessonSchema } from "../validators/lessonSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
-import { permanentlyDeleteMultipleFromB2 } from "../config/s3Client.js";
-import { deleteVideoFromS3 } from "../config/awsS3Client.js";
+import { deleteMediaFromStorage } from "../utils/deleteMediaUtil.js";
 
 // CREATE LESSON
 export const createLesson = async (req, res) => {
@@ -40,6 +39,13 @@ export const createLesson = async (req, res) => {
     if (orderConflict) return errorResponse(res, 409, `A lesson with order ${order} already exists in this section`);
 
     const newLesson = await Lesson.create({ title, description, course, section, isPreview, order, video });
+
+    // Atomically increment the denormalized lesson counter on the course
+    await Course.updateOne(
+      { _id: course },
+      { $inc: { "stats.lessonCount": 1 } }
+    );
+
     return successResponse(res, 201, "Lesson created successfully", { lesson: newLesson });
   } catch (err) {
     console.error("[createLesson] Unexpected error:", err);
@@ -151,21 +157,26 @@ export const deleteLesson = async (req, res) => {
       return errorResponse(res, 403, "You do not have permission to delete this lesson");
     }
 
-    // Delete associated Media from storage and MongoDB
+    // Delete associated Media from storage and MongoDB.
+    // deleteMediaFromStorage correctly handles every pipeline state:
+    // READY (B2), COPY_PENDING (B2 + S3 output), PROCESSING (S3 input + output), UPLOADING/FAILED (S3 input).
     if (lesson.video) {
       const media = await Media.findById(lesson.video);
       if (media) {
-        if (media.storageProvider === "AWS_S3" || media.status !== "READY") {
-          await deleteVideoFromS3(media._id.toString());
-        }
-        if (media.storageProvider === "BACKBLAZE") {
-          await permanentlyDeleteMultipleFromB2([`videos/${media._id.toString()}/`]);
-        }
+        await deleteMediaFromStorage(media);
         await media.deleteOne();
       }
     }
 
     await lesson.deleteOne();
+
+    // Atomically decrement the denormalized lesson counter on the parent course.
+    // lesson.course is available from the document fetched at the start of this handler.
+    await Course.updateOne(
+      { _id: lesson.course },
+      { $inc: { "stats.lessonCount": -1 } }
+    );
+
     return successResponse(res, 200, "Lesson deleted successfully");
   } catch (err) {
     console.error("[deleteLesson] Unexpected error:", err);
