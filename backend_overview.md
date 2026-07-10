@@ -12,7 +12,8 @@ A comprehensive reference for the features, architecture, middleware pipeline, d
 | Framework | Express.js v5 |
 | Database | MongoDB via Mongoose v8 |
 | Session Store | Redis (JSON + FT Search index) |
-| File Storage | Backblaze B2 (S3-compatible) via `@aws-sdk/client-s3` |
+| File Storage | Backblaze B2 (S3-compatible) & AWS S3 via `@aws-sdk/client-s3` |
+| Payments | Razorpay API |
 | Validation | Zod v4 |
 | Auth | Cookie-based signed sessions |
 | Email | Resend |
@@ -38,9 +39,9 @@ Three roles are defined in `config/roles.js`:
 
 | Role | Capabilities |
 |---|---|
-| `STUDENT` | Enroll in courses, access allowed lessons |
-| `CREATOR` | All STUDENT abilities + create/manage their own courses, sections, lessons |
-| `ADMIN` | Full access to everything including user management |
+| `STUDENT` | Enroll in courses, access allowed lessons, purchase courses |
+| `CREATOR` | All STUDENT abilities + create/manage their own courses, sections, lessons, uploads |
+| `ADMIN` | Full access to everything including user management and manual processing triggers |
 
 **Admin operations:**
 - View all users (paginated)
@@ -60,12 +61,13 @@ Three roles are defined in `config/roles.js`:
 - The general update endpoint (`PATCH /course/:id`) cannot change `status` — it is excluded from the update schema.
 - `GET /course/creator/me` supports `?status=Draft`, `?status=Published`, or `?status=All` to fetch all in a single call.
 - All list endpoints support cursor-based pagination (`?cursor=<id>&limit=<n>`).
-- Cascading delete: deleting a course also deletes all its sections, lessons, and associated media from B2.
+- Cascading delete: deleting a course also deletes all its sections, lessons, progress records, and associated media from B2/S3.
+- **Course Statistics**: Courses automatically maintain counters for `stats.sectionCount` and `stats.lessonCount`.
 
 #### Sections
 - Scoped to a course. Ordered by `order` field.
 - **Order validation**: Duplicate `order` values within the same course are rejected (`409 Conflict`) at both the controller level and the DB level (compound unique index on `{ course, order }`).
-- Cascading delete: deleting a section also deletes all its lessons.
+- Cascading delete: deleting a section also deletes all its lessons and progress records.
 
 #### Lessons
 - Scoped to a section (and course). Ordered by `order` field.
@@ -73,13 +75,21 @@ Three roles are defined in `config/roles.js`:
 - `isPreview` flag marks a lesson as accessible to any authenticated user without enrollment.
 
 ### 🎟️ Enrollment System
-- Students can enroll in any `Published` course.
+- Students can enroll in any `Published` course (either directly if price is 0, or automated via successful Razorpay checkout).
 - **Business rules enforced:**
   - User must be authenticated.
   - Course must exist and be `Published` (not `Draft`).
   - The course creator cannot enroll in their own course.
   - A user can only enroll once (compound unique index on `{ user, course }`).
 - Enrollment status: `Active` or `Completed`.
+
+### 💳 Razorpay Payment Integration
+- **Order Creation**: Authenticated users can create a payment order for a course via `POST /payment/order`.
+- **Webhook Processing**: Secure Razorpay webhook route `POST /payment/webhook` validates signatures and automatically enrolls students upon successful completion of payment (`payment.captured` / `order.paid`).
+
+### 📈 Lesson Progress Tracking
+- Saves the completion status, last playback position, max position reached, and total duration watched per student per lesson via `GET/PATCH /lesson/:id/progress`.
+- Progress is automatically cleaned up when associated lessons or enrollments are deleted.
 
 ### 🔒 Lesson and Media Access Control
 Lesson and course resource access is determined by strict middleware and controller logic. The authorization hierarchy and rules are:
@@ -101,18 +111,18 @@ Unauthenticated guest users cannot watch any media (neither preview nor normal l
 #### 3. Metadata Omission (Media ID Stripping)
 To prevent unauthorized media downloads, the media ID (`video` field) is omitted/stripped from the lesson metadata payloads returned in `GET /course/:id/details` and `GET /lesson/section/:sectionId` unless the user meets the media playback authorization rules above.
 
-### 🖼️ Media Management
-- **Media** is a standalone, reusable module that tracks uploaded-file metadata. It has no knowledge of lessons, courses, or sections — business models (Lesson) reference Media documents.
-- **B2 key = `_id`**: Each Media document's `_id` (converted to string via `.toString()`) is used directly as the B2 object key. There is no separate `storageKey` field.
-- **Upload flow**: Lesson-scoped. `POST /media/lesson/:lessonId/upload-url` creates a draft Media document and returns a presigned PUT URL. The frontend uploads directly to B2. After success, the frontend calls `POST /media/lesson/:lessonId/confirm` to verify and finalize.
-- **Replace flow**: `POST /media/lesson/:lessonId/replace-url` deletes the existing video from B2, creates a new Media document, and returns a fresh presigned PUT URL.
-- **Robust Verification**: When confirming, the backend queries B2/S3 using `HeadObjectCommand` to verify the file exists on the storage server and that its actual size matches the claimed size. If verification fails, the B2 object is cleaned up, the Media document is deleted, and a `400` error is returned.
-- **Deletion**: Only the original uploader or an ADMIN may delete. Deletes the object from B2 (including all versions/markers) and removes the Media document.
+---
 
-### 📦 File Storage (Backblaze B2)
-- Generate **pre-signed upload URLs** so clients upload directly to B2, not through the server.
-- Permanent deletion utility (`permanentlyDeleteMultipleFromB2`) handles versioned objects and delete markers.
-- **Important**: All B2 keys passed to the delete utility must be **strings** (e.g., `_id.toString()`), not ObjectId objects.
+### 🖼️ Media Management & Processing Pipelines
+- **Media** is a standalone, reusable module that tracks uploaded-file metadata. Business models (Course, Lesson) reference Media documents.
+- **B2 / S3 Keys**: Uploads are partitioned based on their type (e.g. course thumbnails, trailers, and lesson videos).
+- **Upload pipelines**:
+  - **AWS S3 Lesson Upload**: `POST /media/s3/lesson/:lessonId/upload-url` returns a presigned PUT URL for direct client upload to the landing S3 bucket. After uploading, `POST /media/s3/lesson/:lessonId/confirm` verifies the file using `HeadObjectCommand` and starts the transcoding pipeline.
+  - **Manual Video Ingestion**: `POST /media/manual` creates a custom Media document for manually processed HLS/dash files. `POST /media/manual/:mediaId/verify` verifies manually prepared outputs.
+  - **Course Thumbnail/Trailer**: Dedicated presigned upload and confirm endpoints exist under course controller scopes (`POST /course/:id/thumbnail/upload-url`, `POST /course/:id/trailer/upload-url`).
+- **Robust Verification**: When confirming, the backend queries the storage provider to verify the file exists and that its size/mimeType matches expectations.
+- **Robust Cleanup / Version Deletion**: Handles versioned objects and delete markers on B2/S3 during media deletion.
+- **COPY_PENDING Recovery**: Admin endpoint `POST /media/:id/retry-transfer` allows retrying file syncs to Backblaze B2 using custom rclone script logging.
 
 ---
 
@@ -120,11 +130,13 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 
 | Service | Purpose | Config File |
 |---|---|---|
-| **MongoDB** | Primary database (users, courses, sections, lessons, media, OTPs, enrollments) | `config/db.js` |
+| **MongoDB** | Primary database (users, courses, sections, lessons, media, OTPs, enrollments, payments, lesson progress) | `config/db.js` |
 | **Redis** | Session storage, FT search index for logout-all-devices | `config/redis.js`, `config/redisSetup.js` |
-| **Backblaze B2** | S3-compatible object storage for course media | `config/s3Client.js` |
+| **Backblaze B2** | S3-compatible object storage for production course media delivery | `config/s3Client.js` |
+| **AWS S3** | Ingestion, transcoding, and thumbnail/trailer storage bucket | `config/s3Client.js` |
 | **Resend** | Transactional email (OTPs, password resets) | Used in `authController.js` / `userController.js` |
 | **Google OAuth** | Third-party login via ID token validation | Used in `authController.js` |
+| **Razorpay** | Payment processing and checkout validation | Used in `paymentController.js` |
 
 ---
 
@@ -143,12 +155,17 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 | Field | Type | Notes |
 |---|---|---|
 | `title` | String | Required |
+| `displayName` | String | Optional display-friendly title |
 | `description` | String | Required |
 | `creator` | ObjectId → User | Required |
-| `thumbnail` | ObjectId → Media | References a Media document representing the course thumbnail |
+| `thumbnail` | ObjectId → Media | References course thumbnail Media asset |
+| `trailer` | ObjectId → Media | References course trailer Media asset |
 | `price` | Number | Default `0` |
 | `level` | String | `Beginner` \| `Intermediate` \| `Advanced` |
 | `status` | String | `Draft` \| `Published`, default `Draft` |
+| `stats` | Object | Nested fields: `sectionCount`, `lessonCount` |
+
+> Virtual fields: `thumbnailUrl`, `trailerUrl` provide absolute links to S3 assets.
 
 ### `Section`
 | Field | Type | Notes |
@@ -180,20 +197,48 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 
 > Compound unique index on `{ user, course }` prevents duplicate enrollments.
 
+### `LessonProgress`
+| Field | Type | Notes |
+|---|---|---|
+| `user` | ObjectId → User | Required |
+| `course` | ObjectId → Course | Required |
+| `section` | ObjectId → Section | Required |
+| `lesson` | ObjectId → Lesson | Required |
+| `enrollment` | ObjectId → Enrollment | Required |
+| `duration` | Number | Active watch duration in seconds |
+| `maxPositionReached` | Number | Max playback position in seconds |
+| `lastPosition` | Number | Last playback position in seconds |
+| `completed` | Boolean | Completion flag |
+| `completedAt` | Date | Completion timestamp |
+
+> Indexes: Compound unique `{ user, lesson }`, Compound `{ user, course }`, Single `{ enrollment }`.
+
+### `Payment`
+| Field | Type | Notes |
+|---|---|---|
+| `user` | ObjectId → User | Required, indexed |
+| `course` | ObjectId → Course | Required, indexed |
+| `amount` | Number | Transaction amount |
+| `razorpayOrderId` | String | Razorpay Order ID (unique, indexed) |
+| `razorpayPaymentId` | String | Razorpay Payment ID |
+| `status` | String | `Created` \| `Paid`, default `Created` |
+
 ### `Media`
 | Field | Type | Notes |
 |---|---|---|
-| `_id` | ObjectId | Auto-generated. Used as the object key (via `.toString()`) for the storage provider |
+| `_id` | ObjectId | Auto-generated. Used as the object key for storage |
 | `uploadedBy` | ObjectId → User | Required, indexed |
-| `mimeType` | String | Required |
-| `size` | Number | Bytes, required |
-| `status` | String | `UPLOADING` \| `PROCESSING` \| `READY` \| `FAILED` \| `COPY_PENDING`, default `UPLOADING` |
-| `failedUploadLog` | String | Absolute path to `failed-upload.log` when status is `COPY_PENDING`, otherwise `null` |
-| `copyAttempts` | Number | Number of rclone pipeline runs attempted (default `0`) |
+| `mimeType` | String | File mimetype (e.g. `video/mp4`, `image/png`) |
+| `size` | Number | File size in bytes |
+| `status` | String | `UPLOADING` \| `PROCESSING` \| `READY` \| `FAILED` \| `COPY_PENDING` |
+| `failedUploadLog` | String | Log path when status is `COPY_PENDING` |
+| `copyAttempts` | Number | Count of rclone pipeline attempts |
 | `type` | String | `VIDEO` \| `THUMBNAIL`, default `VIDEO` |
 | `storageProvider` | String | `BACKBLAZE` \| `AWS_S3`, default `BACKBLAZE` |
-
-> **`COPY_PENDING`**: MediaConvert succeeded and the HLS output was partially transferred to B2. Some files are still in S3 awaiting recovery. An admin can call `POST /media/:id/retry-transfer` to attempt recovery without rerunning MediaConvert.
+| `jobId` | String | Transcoding job identifier (e.g., MediaConvert Job ID) |
+| `duration` | Number | Calculated duration of video files in seconds |
+| `ingestionMethod` | String | `AWS_PIPELINE` \| `MANUAL`, default `AWS_PIPELINE` |
+| `error` | String | Error message in case of failure |
 
 ### `OTP`
 Stores short-lived OTPs for email verification and password resets (TTL-managed).
@@ -205,11 +250,11 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Middleware | File | Description |
 |---|---|---|
 | `authenticate` | `middlewares/authenticate.js` | Validates signed `sid` cookie via Redis. Populates `req.user`. Rejects with `401` if missing or expired. |
-| `optionalAuthenticate` | `middlewares/optionalAuthenticate.js` | Same as `authenticate` but does **not** reject unauthenticated requests. Used on routes that serve tiered responses (e.g. lesson list). |
+| `optionalAuthenticate` | `middlewares/optionalAuthenticate.js` | Same as `authenticate` but does **not** reject unauthenticated requests. Used on routes that serve tiered responses. |
 | `authorize` | `middlewares/authorize.js` | Role guard. Rejects with `403` if `req.user.role` is not in the allowed roles list. |
 | `checkLessonAccess` | `middlewares/lessonAccess.js` | LMS access control middleware. Enforces the Admin → Creator → Preview → Enrolled hierarchy. |
 | `customRateLimit` | `middlewares/rateLimit.js` | Wraps `express-rate-limit`. Called as `customRateLimit(windowMinutes, maxRequests)`. |
-| Error Handler | `app.js` (global) | Catches Mongoose validation errors, duplicate key errors (`11000`), operational errors (`isOperational`), and unknown errors. |
+| Error Handler | `app.js` (global) | Catches Mongoose validation errors, duplicate key errors (`11000`), operational errors, and unknown errors. |
 
 ---
 
@@ -262,7 +307,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `PATCH` | `/users/block` | 🔑👑 | 5/min | Block or unblock a user |
 | `PATCH` | `/users/role` | 🔑👑 | 1/min | Change a user's role |
 
-
+---
 
 ### Course Routes — `/course`
 
@@ -272,18 +317,20 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `GET` | `/course/` | 🔓 | — | List published courses (paginated only) |
 | `GET` | `/course/creator/me` | 🔑🛡️ | — | List creator's own courses. Supports `?status=Draft\|Published\|All` |
 | `GET` | `/course/:id` | 🔓 | — | Get a single course by ID |
-| `GET` | `/course/:id/details` | 👁️ | — | Get full structured course details: course + sections + lessons (video field stripped for non-creators) |
-| `POST` | `/course/:id/thumbnail/upload-url` | 🔑🛡️ | 10/min | Generate a presigned AWS S3 upload URL + draft Media asset for the course thumbnail |
-| `POST` | `/course/:id/thumbnail/confirm` | 🔑🛡️ | 10/min | Confirm and verify thumbnail upload on AWS S3 (HeadObject + 2MB limit), link to course |
-| `DELETE` | `/course/:id/thumbnail` | 🔑🛡️ | 10/min | Delete thumbnail from AWS S3, remove Media document, clear Course association |
-| `POST` | `/course/:id/enroll` | 🔑 | 10/min | Enroll the current user in a published course |
-| `GET` | `/course/enrollments/me` | 🔑 | — | Get all enrollments of the current logged-in user |
+| `GET` | `/course/:id/details` | 👁️ | — | Get full structured course details (video field stripped for non-creators/non-enrolled) |
+| `POST` | `/course/:id/thumbnail/upload-url` | 🔑🛡️ | 10/min | Generate thumbnail upload S3 URL + draft Media asset |
+| `POST` | `/course/:id/thumbnail/confirm` | 🔑🛡️ | 10/min | Confirm thumbnail upload on AWS S3, link to course |
+| `DELETE` | `/course/:id/thumbnail` | 🔑🛡️ | 10/min | Delete thumbnail from AWS S3, remove Media, clear Course field |
+| `POST` | `/course/:id/trailer/upload-url` | 🔑🛡️ | 10/min | Generate course trailer S3 upload URL + draft Media asset |
+| `POST` | `/course/:id/trailer/confirm` | 🔑🛡️ | 10/min | Confirm trailer upload on AWS S3, link to course |
+| `DELETE` | `/course/:id/trailer` | 🔑🛡️ | 10/min | Delete trailer from AWS S3, remove Media, clear Course field |
+| `POST` | `/course/:id/enroll` | 🔑 | 10/min | Enroll user directly (for free courses) |
+| `GET` | `/course/enrollments/me` | 🔑 | — | Get all enrollments of current user |
 | `GET` | `/course/:id/enrollment` | 🔑 | — | Get a single enrollment of the current user using course ID |
-| `PATCH` | `/course/:id/publish` | 🔑🛡️ | 10/min | Publish a course. Validates: ≥1 section, each section has ≥1 lesson, each lesson has a video |
+| `PATCH` | `/course/:id/publish` | 🔑🛡️ | 10/min | Publish a course. Validates section & lesson count and videos |
 | `PATCH` | `/course/:id/unpublish` | 🔑🛡️ | 10/min | Unpublish a course (set status back to Draft) |
-| `PATCH` | `/course/:id` | 🔑🛡️ | 10/min | Update course metadata (cannot change status — use publish/unpublish endpoints) |
-| `DELETE` | `/course/:id` | 🔑🛡️ | 5/min | Delete a course and all its sections, lessons, and media (creator or admin only) |
-
+| `PATCH` | `/course/:id` | 🔑🛡️ | 10/min | Update course metadata (excluding status) |
+| `DELETE` | `/course/:id` | 🔑🛡️ | 5/min | Delete a course and its sections, lessons, progress, and media |
 
 ---
 
@@ -306,10 +353,13 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `POST` | `/lesson/` | 🔑🛡️ | 10/min | Create a lesson (order must be unique within section) |
-| `GET` | `/lesson/section/:sectionId` | 👁️ | — | Get all lesson metadata for a section. Media/video info is stripped for unauthorized lessons (e.g. guests/non-enrolled) |
+| `GET` | `/lesson/section/:sectionId` | 👁️ | — | Get all lesson metadata for a section (video info stripped for unauthorized) |
 | `GET` | `/lesson/creator/section/:sectionId` | 🔑🛡️ | — | Get creator's lessons for a section |
 | `GET` | `/lesson/creator/:id` | 🔑🛡️ | — | Get a specific lesson (creator view) |
-| `GET` | `/lesson/:id` | 🔑 + `checkLessonAccess` | 60/min | Get a lesson (strictly access-controlled by Admin → Creator → Preview → Enrolled chain) |
+| `GET` | `/lesson/:id` | 🔑 + `checkLessonAccess` | 60/min | Get a lesson (strictly access-controlled by hierarchy) |
+| `GET` | `/lesson/:id/play` | 🔑 + `checkLessonAccess` | 30/min | Generate lesson playback tokens/URL |
+| `GET` | `/lesson/:id/progress` | 🔑 + `checkLessonAccess` | — | Get current user's progress for a lesson |
+| `PATCH` | `/lesson/:id/progress` | 🔑 + `checkLessonAccess` | — | Update/save user's progress for a lesson |
 | `PATCH` | `/lesson/:id` | 🔑🛡️ | 10/min | Update a lesson (order conflict check on change) |
 | `DELETE` | `/lesson/:id` | 🔑🛡️ | 10/min | Delete a lesson |
 
@@ -319,11 +369,21 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
-| `POST` | `/media/lesson/:lessonId/upload-url` | 🔑🛡️ | 15/min | Create a draft Media document and generate a presigned PUT URL for direct B2 upload |
-| `POST` | `/media/lesson/:lessonId/replace-url` | 🔑🛡️ | 15/min | Delete existing video, create new Media document, and generate a presigned PUT URL |
-| `POST` | `/media/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify upload on B2 (HeadObject + size check), finalize Media document, and associate with lesson |
-| `DELETE` | `/media/:id` | 🔑 | 10/min | Delete media from B2 + MongoDB (uploader or ADMIN only) |
-| `POST` | `/media/:id/retry-transfer` | 🔑👑 | 5/min | Retry pending file transfers for a `COPY_PENDING` media (ADMIN only). Reads `failed-upload.log`, retries missing files, promotes to `READY` on success |
+| `POST` | `/media/internal/processing-complete` | 🔓 | — | Webhook called when transcoder finishes a job (updates status to READY/FAILED, updates duration) |
+| `POST` | `/media/s3/lesson/:lessonId/upload-url` | 🔑🛡️ | 15/min | Create a draft Media and generate S3 presigned upload URL |
+| `POST` | `/media/s3/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify S3 upload (size check & type check), starts processing pipeline |
+| `POST` | `/media/manual` | 🔑🛡️ | 15/min | Ingest manually prepared HLS/dash files into database |
+| `POST` | `/media/manual/:mediaId/verify` | 🔑🛡️ | 15/min | Verify files of manually ingested media on storage bucket |
+| `POST` | `/media/:id/retry-transfer` | 🔑👑 | 5/min | Retry pending file transfers for `COPY_PENDING` media |
+
+---
+
+### Payment Routes — `/payment`
+
+| Method | Path | Auth | Rate Limit | Description |
+|---|---|---|---|---|
+| `POST` | `/payment/order` | 🔑 | 10/min | Create a Razorpay payment order for purchasing a course |
+| `POST` | `/payment/webhook` | 🔓 | 30/min | Razorpay payment webhook endpoint to automatically enroll users |
 
 ---
 

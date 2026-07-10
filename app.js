@@ -9,6 +9,7 @@ import sectionRoutes from "./Routes/sectionRoutes.js";
 import lessonRoutes from "./Routes/lessonRoutes.js";
 import mediaRoutes from "./Routes/mediaRoutes.js";
 import paymentRoutes from "./Routes/paymentRoutes.js";
+import learningRoutes from "./Routes/learningRoutes.js";
 import cookieParser from "cookie-parser";
 import { authenticate } from "./middlewares/authenticate.js";
 import helmet from "helmet";
@@ -49,6 +50,7 @@ app.use("/section", sectionRoutes);
 app.use("/lesson", lessonRoutes);
 app.use("/media", mediaRoutes);
 app.use("/payment", paymentRoutes);
+app.use("/learning", learningRoutes);
 
 app.use((error, req, res, next) => {
   // ---- Mongoose validation errors ----

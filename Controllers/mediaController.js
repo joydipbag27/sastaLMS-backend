@@ -146,7 +146,15 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
       return errorResponse(res, 400, "File size mismatch on storage");
     }
 
-    media.mimeType = data.mimeType;
+    // Verify contentType is a video format
+    if (!s3Data.contentType || !s3Data.contentType.startsWith("video/")) {
+      console.error(`[confirmLessonVideoUploadS3] Non-video file uploaded: ${s3Data.contentType}`);
+      await deleteVideoFromS3(key);
+      await media.deleteOne();
+      return errorResponse(res, 400, "Only video file uploads are allowed");
+    }
+
+    media.mimeType = s3Data.contentType;
     media.size = data.size;
     media.status = "PROCESSING";
     await media.save();
