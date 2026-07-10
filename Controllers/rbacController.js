@@ -1,5 +1,6 @@
 import User from "../Models/userModel.js";
 import Course from "../Models/courseModel.js";
+import Enrollment from "../Models/enrollmentModel.js";
 import mongoose from "mongoose";
 import { redisClient } from "../config/redis.js";
 import { roleDataSchema } from "../validators/authSchema.js";
@@ -10,6 +11,44 @@ import {
   invalidateUserSessions,
   invalidateUserProfileCache,
 } from "../services/userDeletionService.js";
+
+// GET ADMIN DASHBOARD SUMMARY
+export const getAdminDashboardSummary = async (req, res) => {
+  try {
+    const [
+      totalUsers,
+      enrolledUserIds,
+      totalEnrollments,
+      totalCourses,
+      publishedCourses,
+      draftCourses,
+      blockedUsers,
+    ] = await Promise.all([
+      User.countDocuments({}),
+      Enrollment.distinct("user", { status: "Active" }),
+      Enrollment.countDocuments({ status: "Active" }),
+      Course.countDocuments({}),
+      Course.countDocuments({ status: "Published" }),
+      Course.countDocuments({ status: "Draft" }),
+      User.countDocuments({ isBlocked: true }),
+    ]);
+
+    const enrolledUsers = enrolledUserIds.length;
+
+    return successResponse(res, 200, "Admin dashboard summary fetched successfully", {
+      totalUsers,
+      enrolledUsers,
+      totalEnrollments,
+      totalCourses,
+      publishedCourses,
+      draftCourses,
+      blockedUsers,
+    });
+  } catch (err) {
+    console.error("[getAdminDashboardSummary] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch admin dashboard summary");
+  }
+};
 
 // GET ALL USERS
 export const getAllUsers = async (req, res) => {

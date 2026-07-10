@@ -45,6 +45,7 @@ app.use(
 app.use("/user", userRoutes);
 app.use("/auth", authRoutes);
 app.use("/users", authenticate, rbacRoutes);
+app.use("/admin", authenticate, rbacRoutes);
 app.use("/course", courseRoutes);
 app.use("/section", sectionRoutes);
 app.use("/lesson", lessonRoutes);

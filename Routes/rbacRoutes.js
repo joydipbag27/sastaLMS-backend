@@ -2,16 +2,24 @@ import express from "express";
 import { authorize } from "../middlewares/authorize.js";
 import { roles } from "../config/roles.js";
 import {
-  adminBlock,
-  adminDelete,
-  adminLogout,
-  changeRole,
-  getAllUsers,
-  getSessionStatus,
+   adminBlock,
+   adminDelete,
+   adminLogout,
+   changeRole,
+   getAllUsers,
+   getSessionStatus,
+   getAdminDashboardSummary,
 } from "../Controllers/rbacController.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
 
 const router = express.Router();
+
+router.get(
+  "/dashboard/summary",
+  customRateLimit(1, 10),
+  authorize(roles.ADMIN),
+  getAdminDashboardSummary,
+);
 
 router.get("/", customRateLimit(1, 5), authorize(roles.CREATOR, roles.ADMIN), getAllUsers);
 
