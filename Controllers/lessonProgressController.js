@@ -54,6 +54,17 @@ export const updateLessonProgress = async (req, res) => {
     const userId = req.user._id;
     const { lastPosition } = data;
 
+    // Position safety check for non-finite values
+    if (!Number.isFinite(lastPosition)) {
+      return errorResponse(res, 400, "lastPosition must be a finite number");
+    }
+
+    const authoritativeDuration = lesson.duration || 0;
+    const safeLastPosition =
+      authoritativeDuration > 0
+        ? Math.min(lastPosition, authoritativeDuration)
+        : lastPosition;
+
     let progress = await LessonProgress.findOne({ user: userId, lesson: lesson._id });
 
     if (!progress) {
@@ -74,25 +85,40 @@ export const updateLessonProgress = async (req, res) => {
         course: lesson.course,
         section: lesson.section,
         lesson: lesson._id,
-        duration: lesson.duration || 0,
-        lastPosition,
-        maxPositionReached: lastPosition,
+        duration: authoritativeDuration,
+        lastPosition: safeLastPosition,
+        maxPositionReached: safeLastPosition,
       });
     } else {
-      // Update playback state
-      progress.lastPosition = lastPosition;
-      progress.maxPositionReached = Math.max(progress.maxPositionReached, lastPosition);
+      // Synchronize progress duration with authoritative lesson duration if they differ
+      if (authoritativeDuration > 0 && progress.duration !== authoritativeDuration) {
+        progress.duration = authoritativeDuration;
+      }
+
+      // Update playback state safely
+      progress.lastPosition = safeLastPosition;
+      progress.maxPositionReached = Math.max(progress.maxPositionReached, safeLastPosition);
     }
 
     // Always update lastWatchedAt
     progress.lastWatchedAt = new Date();
 
-    // Temporary completion logic: maxPositionReached >= 95% of duration
-    if (!progress.completed && progress.duration > 0) {
-      if (progress.maxPositionReached / progress.duration >= 0.95) {
-        progress.completed = true;
-        progress.completedAt = new Date();
-      }
+    // Authoritative completion logic
+    const COMPLETION_THRESHOLD = 0.90;
+    const endTolerance = Math.min(
+      5,
+      Math.max(1, progress.duration * 0.02)
+    );
+
+    const reachedThreshold =
+      progress.maxPositionReached >= progress.duration * COMPLETION_THRESHOLD;
+
+    const reachedNearEnd =
+      progress.duration - progress.maxPositionReached <= endTolerance;
+
+    if (!progress.completed && progress.duration > 0 && (reachedThreshold || reachedNearEnd)) {
+      progress.completed = true;
+      progress.completedAt = new Date();
     }
 
     await progress.save();
