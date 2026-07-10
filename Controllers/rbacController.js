@@ -1,6 +1,8 @@
 import User from "../Models/userModel.js";
 import Course from "../Models/courseModel.js";
 import Enrollment from "../Models/enrollmentModel.js";
+import Payment from "../Models/paymentModel.js";
+import { razorpayInstance } from "../config/razorpay.js";
 import mongoose from "mongoose";
 import { redisClient } from "../config/redis.js";
 import { roleDataSchema } from "../validators/authSchema.js";
@@ -47,6 +49,214 @@ export const getAdminDashboardSummary = async (req, res) => {
   } catch (err) {
     console.error("[getAdminDashboardSummary] Unexpected error:", err);
     return errorResponse(res, 500, "Failed to fetch admin dashboard summary");
+  }
+};
+
+// GET ADMIN PAYMENT SUMMARY
+export const getAdminPaymentSummary = async (req, res) => {
+  try {
+    const now = new Date();
+    // Using UTC consistently for calendar month boundaries
+    const startOfCurrentMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const startOfNextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+
+    const [
+      revenueResult,
+      monthlyResult,
+      totalSuccessfulPayments,
+      totalPaymentAttempts,
+    ] = await Promise.all([
+      // Total Revenue sum
+      Payment.aggregate([
+        { $match: { status: "Paid" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // Current Calendar Month Revenue
+      Payment.aggregate([
+        {
+          $match: {
+            status: "Paid",
+            updatedAt: {
+              $gte: startOfCurrentMonth,
+              $lt: startOfNextMonth,
+            },
+          },
+        },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]),
+      // Count of successful payments
+      Payment.countDocuments({ status: "Paid" }),
+      // Count of total attempts (all Payment documents)
+      Payment.countDocuments({}),
+    ]);
+
+    const totalRevenue = revenueResult[0]?.total ?? 0;
+    const monthlyRevenue = monthlyResult[0]?.total ?? 0;
+
+    return successResponse(res, 200, "Admin payment summary fetched successfully", {
+      totalRevenue,
+      monthlyRevenue,
+      totalSuccessfulPayments,
+      totalPaymentAttempts,
+    });
+  } catch (err) {
+    console.error("[getAdminPaymentSummary] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch admin payment summary");
+  }
+};
+
+// GET COURSE-WISE REVENUE
+export const getRevenueByCourse = async (req, res) => {
+  try {
+    // Validate limit and fallback safely
+    let limit = Math.max(1, Math.min(parseInt(req.query.limit) || 20, 100));
+
+    const coursesRevenue = await Payment.aggregate([
+      { $match: { status: "Paid" } },
+      {
+        $group: {
+          _id: "$course",
+          revenue: { $sum: "$amount" },
+          successfulPayments: { $sum: 1 },
+        },
+      },
+      {
+        $sort: {
+          revenue: -1,
+          _id: 1, // deterministic tie-breaker
+        },
+      },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "courses",
+          localField: "_id",
+          foreignField: "_id",
+          as: "courseInfo",
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          courseId: "$_id",
+          revenue: 1,
+          successfulPayments: 1,
+          title: { $ifNull: [{ $arrayElemAt: ["$courseInfo.title", 0] }, "Deleted Course"] },
+        },
+      },
+    ]);
+
+    return successResponse(res, 200, "Course revenue fetched successfully", {
+      courses: coursesRevenue,
+    });
+  } catch (err) {
+    console.error("[getRevenueByCourse] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch course revenue data");
+  }
+};
+
+// GET SUCCESSFUL PAYMENT HISTORY (Cursor Paginated)
+export const getSuccessfulPayments = async (req, res) => {
+  try {
+    let limit = Math.max(1, Math.min(parseInt(req.query.limit) || 20, 50));
+    const { cursor } = req.query;
+
+    if (cursor && !mongoose.isValidObjectId(cursor)) {
+      return errorResponse(res, 400, "Invalid cursor");
+    }
+
+    const query = { status: "Paid" };
+    if (cursor) {
+      query._id = { $lt: new mongoose.Types.ObjectId(cursor) };
+    }
+
+    const payments = await Payment.find(query)
+      .sort({ _id: -1 })
+      .limit(limit + 1)
+      .populate("user", "username email")
+      .populate("course", "title")
+      .lean();
+
+    const hasMore = payments.length > limit;
+    const results = hasMore ? payments.slice(0, limit) : payments;
+    const nextCursor = hasMore && results.length > 0 ? results[results.length - 1]._id : null;
+
+    const sanitizedPayments = results.map((p) => ({
+      _id: p._id,
+      amount: p.amount,
+      currency: "INR",
+      status: p.status,
+      razorpayOrderId: p.razorpayOrderId,
+      razorpayPaymentId: p.razorpayPaymentId,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      user: p.user
+        ? {
+            _id: p.user._id,
+            username: p.user.username,
+            email: p.user.email,
+          }
+        : null,
+      course: p.course
+        ? {
+            _id: p.course._id,
+            title: p.course.title,
+          }
+        : null,
+    }));
+
+    return successResponse(res, 200, "Successful payments fetched successfully", {
+      payments: sanitizedPayments,
+      nextCursor,
+      hasMore,
+    });
+  } catch (err) {
+    console.error("[getSuccessfulPayments] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch successful payments history");
+  }
+};
+
+// ON-DEMAND INVOICE FETCH FOR A SPECIFIC SUCCESSFUL PAYMENT
+export const getPaymentInvoice = async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+
+    if (!paymentId || !mongoose.isValidObjectId(paymentId)) {
+      return errorResponse(res, 400, "Invalid paymentId");
+    }
+
+    const payment = await Payment.findById(paymentId);
+    if (!payment) {
+      return errorResponse(res, 404, "Payment record not found");
+    }
+
+    if (payment.status !== "Paid") {
+      return errorResponse(res, 400, "Invoice is only available for successful payments");
+    }
+
+    if (!payment.razorpayPaymentId) {
+      return errorResponse(res, 404, "Payment gateway identifier missing on payment record");
+    }
+
+    try {
+      // Retrieve payment entity from Razorpay to obtain the invoice_id
+      const rpPayment = await razorpayInstance.payments.fetch(payment.razorpayPaymentId);
+      if (rpPayment && rpPayment.invoice_id) {
+        // Retrieve details of the associated invoice
+        const invoice = await razorpayInstance.invoices.fetch(rpPayment.invoice_id);
+        return successResponse(res, 200, "Invoice fetched successfully", {
+          invoiceId: invoice.id,
+          invoiceUrl: invoice.short_url || invoice.invoice_url || null,
+        });
+      }
+      return errorResponse(res, 404, "No invoice has been generated for this payment");
+    } catch (rpErr) {
+      console.error("[getPaymentInvoice] Razorpay API call failed:", rpErr);
+      return errorResponse(res, 502, "Failed to retrieve invoice from payment gateway");
+    }
+  } catch (err) {
+    console.error("[getPaymentInvoice] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to retrieve invoice details");
   }
 };
 

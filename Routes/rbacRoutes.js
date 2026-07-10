@@ -9,6 +9,10 @@ import {
    getAllUsers,
    getSessionStatus,
    getAdminDashboardSummary,
+   getAdminPaymentSummary,
+   getRevenueByCourse,
+   getSuccessfulPayments,
+   getPaymentInvoice,
 } from "../Controllers/rbacController.js";
 import { customRateLimit } from "../middlewares/rateLimit.js";
 
@@ -19,6 +23,34 @@ router.get(
   customRateLimit(1, 10),
   authorize(roles.ADMIN),
   getAdminDashboardSummary,
+);
+
+router.get(
+  "/payments/summary",
+  customRateLimit(1, 10),
+  authorize(roles.ADMIN),
+  getAdminPaymentSummary,
+);
+
+router.get(
+  "/payments/revenue-by-course",
+  customRateLimit(1, 10),
+  authorize(roles.ADMIN),
+  getRevenueByCourse,
+);
+
+router.get(
+  "/payments/successful",
+  customRateLimit(1, 10),
+  authorize(roles.ADMIN),
+  getSuccessfulPayments,
+);
+
+router.get(
+  "/payments/:paymentId/invoice",
+  customRateLimit(1, 10),
+  authorize(roles.ADMIN),
+  getPaymentInvoice,
 );
 
 router.get("/", customRateLimit(1, 5), authorize(roles.CREATOR, roles.ADMIN), getAllUsers);
