@@ -58,7 +58,3 @@ export const verifyOtpSchema = z.object({
     .regex(/^\d+$/, "OTP must be numeric"),
   purpose: z.enum(["REGISTER", "CHANGE_PASSWORD", "FORGOT_PASSWORD", "SET_PASSWORD"]),
 });
-export const roleDataSchema = z.object({
-  userId: z.string().regex(/^[a-f\d]{24}$/i),
-  changeTo: z.enum(["STUDENT", "CREATOR", "ADMIN"]),
-});

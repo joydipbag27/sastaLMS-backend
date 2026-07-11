@@ -18,7 +18,7 @@ export const createSection = async (req, res) => {
     const courseExists = await Course.findById(course);
     if (!courseExists) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && courseExists.creator.toString() !== req.user._id.toString()) {
+    if (courseExists.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -47,7 +47,7 @@ export const getSectionsByCourse = async (req, res) => {
     const course = await Course.findById(courseId);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator.toString() === req.user._id.toString());
+    const isCreator = req.user && course.creator.toString() === req.user._id.toString();
     if (course.status !== "Published" && !isCreator) {
       return errorResponse(res, 403, "This course is not published");
     }
@@ -70,7 +70,7 @@ export const getSectionById = async (req, res) => {
     const course = await Course.findById(section.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator.toString() === req.user._id.toString());
+    const isCreator = req.user && course.creator.toString() === req.user._id.toString();
     if (course.status !== "Published" && !isCreator) {
       return errorResponse(res, 403, "This course is not published");
     }
@@ -95,7 +95,7 @@ export const updateSection = async (req, res) => {
     const course = await Course.findById(section.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this section");
     }
 
@@ -123,7 +123,7 @@ export const deleteSection = async (req, res) => {
     const course = await Course.findById(section.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this section");
     }
 
@@ -174,7 +174,7 @@ export const getMySectionsByCourse = async (req, res) => {
     const course = await Course.findById(courseId);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to view sections for this course");
     }
 
@@ -196,7 +196,7 @@ export const getMySectionById = async (req, res) => {
     const course = await Course.findById(section.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to view this section");
     }
 

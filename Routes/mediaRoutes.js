@@ -25,7 +25,7 @@ router.post(
   "/s3/lesson/:lessonId/upload-url",
   customRateLimit(1, 15),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getLessonVideoUploadUrlS3,
 );
 
@@ -33,7 +33,7 @@ router.post(
   "/s3/lesson/:lessonId/confirm",
   customRateLimit(1, 15),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   confirmLessonVideoUploadS3,
 );
 
@@ -42,7 +42,7 @@ router.post(
   "/manual",
   customRateLimit(1, 15),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   createManualMedia,
 );
 
@@ -58,7 +58,7 @@ router.post(
   "/:id/retry-transfer",
   customRateLimit(1, 5),
   authenticate,
-  authorize(roles.ADMIN),
+  authorize(roles.CREATOR),
   retryMediaTransfer,
 );
 

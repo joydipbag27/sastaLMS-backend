@@ -140,9 +140,8 @@ export const createManualMedia = async (req, res) => {
       return errorResponse(res, 404, "Associated course not found");
     }
 
-    // Verify creator authorization (Admin or Course Creator)
+    // Verify creator authorization
     if (
-      req.user.role !== "ADMIN" &&
       course.creator.toString() !== req.user._id.toString()
     ) {
       return errorResponse(
@@ -214,9 +213,8 @@ export const verifyManualMedia = async (req, res) => {
       return errorResponse(res, 400, "This media does not belong to the manual ingestion flow");
     }
 
-    // Authorize: Admin or the owner creator
+    // Authorize: the uploader (course creator)
     if (
-      req.user.role !== "ADMIN" &&
       media.uploadedBy.toString() !== req.user._id.toString()
     ) {
       return errorResponse(

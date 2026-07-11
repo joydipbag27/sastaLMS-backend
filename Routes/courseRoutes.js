@@ -31,7 +31,7 @@ router.post(
   "/",
   customRateLimit(1, 5),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   createCourse,
 );
 
@@ -40,7 +40,7 @@ router.get("/", getCourses);
 router.get(
   "/creator/me",
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getMyCourses,
 );
 
@@ -66,7 +66,7 @@ router.post(
   "/:id/thumbnail/upload-url",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getThumbnailUploadUrl,
 );
 
@@ -74,7 +74,7 @@ router.post(
   "/:id/thumbnail/confirm",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   confirmThumbnail,
 );
 
@@ -82,7 +82,7 @@ router.delete(
   "/:id/thumbnail",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   deleteThumbnail,
 );
 
@@ -90,7 +90,7 @@ router.post(
   "/:id/trailer/upload-url",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getTrailerUploadUrl,
 );
 
@@ -98,7 +98,7 @@ router.post(
   "/:id/trailer/confirm",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   confirmTrailer,
 );
 
@@ -106,7 +106,7 @@ router.delete(
   "/:id/trailer",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   deleteTrailer,
 );
 
@@ -121,7 +121,7 @@ router.patch(
   "/:id/publish",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   publishCourse,
 );
 
@@ -129,7 +129,7 @@ router.patch(
   "/:id/unpublish",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   unpublishCourse,
 );
 
@@ -137,7 +137,7 @@ router.patch(
   "/:id",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   updateCourse,
 );
 
@@ -145,7 +145,7 @@ router.delete(
   "/:id",
   customRateLimit(1, 5),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   deleteCourse,
 );
 

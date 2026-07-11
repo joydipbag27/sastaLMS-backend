@@ -5,7 +5,6 @@ import Payment from "../Models/paymentModel.js";
 import { razorpayInstance } from "../config/razorpay.js";
 import mongoose from "mongoose";
 import { redisClient } from "../config/redis.js";
-import { roleDataSchema } from "../validators/authSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import {
   deleteUser,
@@ -14,7 +13,7 @@ import {
   invalidateUserProfileCache,
 } from "../services/userDeletionService.js";
 
-// GET ADMIN DASHBOARD SUMMARY
+// GET DASHBOARD SUMMARY
 export const getAdminDashboardSummary = async (req, res) => {
   try {
     const [
@@ -52,7 +51,7 @@ export const getAdminDashboardSummary = async (req, res) => {
   }
 };
 
-// GET ADMIN PAYMENT SUMMARY
+// GET PAYMENT SUMMARY
 export const getAdminPaymentSummary = async (req, res) => {
   try {
     const now = new Date();
@@ -260,7 +259,7 @@ export const getPaymentInvoice = async (req, res) => {
   }
 };
 
-// GET ALL USERS
+// GET ALL MANAGEABLE USERS (STUDENT accounts only)
 export const getAllUsers = async (req, res) => {
   const ownId = req.user._id;
   const { cursor } = req.query;
@@ -272,8 +271,8 @@ export const getAllUsers = async (req, res) => {
     return errorResponse(res, 400, "Invalid cursor");
   }
 
-  // Exclude current user and apply cursor filter
-  const query = { _id: { $ne: ownId } };
+  // Return only STUDENT accounts — CREATOR accounts are not manageable via these endpoints
+  const query = { _id: { $ne: ownId }, role: "STUDENT" };
   if (cursor) query._id = { ...query._id, $lt: cursor };
 
   try {
@@ -310,7 +309,7 @@ export const getSessionStatus = async (req, res) => {
     const targetUser = await User.findById(userId);
     if (!targetUser) return errorResponse(res, 404, "User not found");
 
-    // Admins cannot inspect equal or higher rank users
+    // Ensure target is a manageable STUDENT account
     try {
       assertAdminCanManageUser(req.user, targetUser);
     } catch (err) {
@@ -328,7 +327,7 @@ export const getSessionStatus = async (req, res) => {
   }
 };
 
-// ADMIN LOGOUT (Force Logout)
+// FORCE LOGOUT (admin action)
 export const adminLogout = async (req, res) => {
   const { userId } = req.body;
   if (!mongoose.isValidObjectId(userId)) return errorResponse(res, 400, "Invalid userId");
@@ -337,7 +336,7 @@ export const adminLogout = async (req, res) => {
     const targetUser = await User.findById(userId);
     if (!targetUser) return errorResponse(res, 404, "User not found");
 
-    // Prevent self-targeting and hierarchy violations
+    // Prevent self-targeting and ensure target is a STUDENT
     try {
       assertAdminCanManageUser(req.user, targetUser);
     } catch (err) {
@@ -360,7 +359,7 @@ export const adminLogout = async (req, res) => {
   }
 };
 
-// ADMIN DELETE
+// DELETE USER (CREATOR-authorized, STUDENT targets only)
 export const adminDelete = async (req, res) => {
   const { userId } = req.body;
   if (!mongoose.isValidObjectId(userId)) return errorResponse(res, 400, "Invalid userId");
@@ -369,7 +368,7 @@ export const adminDelete = async (req, res) => {
     const targetUser = await User.findById(userId);
     if (!targetUser) return errorResponse(res, 404, "User not found");
 
-    // Prevent self-deletion and hierarchy violations
+    // Prevent self-deletion and ensure target is a STUDENT
     try {
       assertAdminCanManageUser(req.user, targetUser);
     } catch (err) {
@@ -395,7 +394,7 @@ export const adminDelete = async (req, res) => {
   }
 };
 
-// ADMIN BLOCK / UNBLOCK
+// BLOCK / UNBLOCK
 export const adminBlock = async (req, res) => {
   const { userId, isBlocked } = req.body;
   if (!mongoose.isValidObjectId(userId)) return errorResponse(res, 400, "Invalid userId");
@@ -404,7 +403,7 @@ export const adminBlock = async (req, res) => {
     const targetUser = await User.findById(userId);
     if (!targetUser) return errorResponse(res, 404, "User not found");
 
-    // Prevent self-blocking and hierarchy violations
+    // Prevent self-blocking and ensure target is a STUDENT
     try {
       assertAdminCanManageUser(req.user, targetUser);
     } catch (err) {
@@ -443,65 +442,43 @@ export const adminBlock = async (req, res) => {
   }
 };
 
-// CHANGE ROLE
-export const changeRole = async (req, res) => {
-  const ownRole = req.user.role;
-  const { success, data, error } = roleDataSchema.safeParse(req.body);
-  if (!success) return errorResponse(res, 400, error.issues[0].message);
+// PROMOTE STUDENT → CREATOR
+// The only allowed role transition through the administration API.
+// Promotion is irreversible through the normal API.
+export const promoteToCreator = async (req, res) => {
+  const { userId } = req.params;
 
-  const { userId, changeTo } = data;
+  if (!mongoose.isValidObjectId(userId)) {
+    return errorResponse(res, 400, "Invalid userId");
+  }
 
   try {
     const targetUser = await User.findById(userId);
     if (!targetUser) return errorResponse(res, 404, "User not found");
 
-    // Enforce target rules: no self-targeting, no managing equal/higher-rank users
-    try {
-      assertAdminCanManageUser(req.user, targetUser);
-    } catch (err) {
-      if (err.isOperational) {
-        return errorResponse(res, err.statusCode, err.message);
-      }
-      throw err;
+    // Prevent self-promotion
+    if (req.user._id.toString() === targetUser._id.toString()) {
+      return errorResponse(res, 403, "You cannot promote yourself");
     }
 
-    if (ownRole !== "ADMIN") return errorResponse(res, 403, "Insufficient permissions");
-
-    const roleRank = { STUDENT: 1, CREATOR: 2, ADMIN: 3 };
-
-    if (roleRank[changeTo] > roleRank[ownRole]) {
-      return errorResponse(res, 403, "Cannot assign a role higher than your own");
+    // Only STUDENT → CREATOR is allowed
+    if (targetUser.role !== "STUDENT") {
+      return errorResponse(res, 400, "Target user is already a CREATOR. Promotion is irreversible.");
     }
 
-    // Idempotency check
-    if (targetUser.role === changeTo) {
-      return successResponse(res, 200, "User role is already set to the requested value", {
-        userId,
-        role: targetUser.role,
-      });
-    }
-
-    // Demotion Precondition: CREATOR -> STUDENT
-    if (targetUser.role === "CREATOR" && changeTo === "STUDENT") {
-      const ownedCoursesCount = await Course.countDocuments({ creator: userId });
-      if (ownedCoursesCount > 0) {
-        return errorResponse(res, 400, "Cannot demote a creator who still owns courses. Delete or transfer courses first.");
-      }
-    }
-
-    targetUser.role = changeTo;
+    targetUser.role = "CREATOR";
     await targetUser.save();
 
-    // Invalidate profile cache and force re-login for new role to take effect
-    await invalidateUserProfileCache(userId);
+    // Invalidate all sessions so the promoted user must log in again to receive the new role
     await invalidateUserSessions(userId);
+    await invalidateUserProfileCache(userId);
 
-    return successResponse(res, 200, "User role updated successfully", {
+    return successResponse(res, 200, "User promoted to CREATOR successfully", {
       userId,
-      role: targetUser.role,
+      role: "CREATOR",
     });
   } catch (err) {
-    console.error("[changeRole] Unexpected error:", err);
-    return errorResponse(res, 500, "Failed to update user role");
+    console.error("[promoteToCreator] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to promote user");
   }
 };

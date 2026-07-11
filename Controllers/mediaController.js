@@ -51,7 +51,6 @@ export const getLessonVideoUploadUrlS3 = async (req, res) => {
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
     if (
-      req.user.role !== "ADMIN" &&
       course.creator.toString() !== req.user._id.toString()
     ) {
       return errorResponse(
@@ -104,7 +103,6 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
     if (
-      req.user.role !== "ADMIN" &&
       course.creator.toString() !== req.user._id.toString()
     ) {
       return errorResponse(
@@ -117,7 +115,7 @@ export const confirmLessonVideoUploadS3 = async (req, res) => {
     const media = await Media.findById(data.mediaId);
     if (!media) return errorResponse(res, 404, "Media record not found");
 
-    if (req.user.role !== "ADMIN" && media.uploadedBy.toString() !== req.user._id.toString()) {
+    if (media.uploadedBy.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to confirm this media");
     }
 
@@ -446,7 +444,7 @@ export const mediaProcessCompleted = async (req, res) => {
   }
 };
 
-// POST /media/:id/retry-transfer  (ADMIN only)
+// POST /media/:id/retry-transfer  (CREATOR only)
 export const retryMediaTransfer = async (req, res) => {
   const { id } = req.params;
   if (!/^[a-f\d]{24}$/i.test(id))

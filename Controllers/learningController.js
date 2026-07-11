@@ -21,7 +21,7 @@ const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
  * @param {object} reqUser   - req.user populated by authenticate middleware
  * @param {object} res       - Express response object (used for early error returns)
  * @param {object} [courseSelectFields]  - Optional .select() override
- * @returns {Promise<{ course, userId, isAdmin, isCreator, hasPrivilegedAccess, enrollment } | null>}
+ * @returns {Promise<{ course, userId, isCreator, hasPrivilegedAccess, enrollment } | null>}
  *   Returns null when an error response was already sent.
  */
 const resolveCourseAccess = async (
@@ -40,11 +40,10 @@ const resolveCourseAccess = async (
   }
 
   const userId = reqUser._id;
-  const isAdmin = reqUser.role === "ADMIN";
   // creator._id when populated, plain ObjectId otherwise
   const creatorId = course.creator?._id ?? course.creator;
-  const isCreator = !isAdmin && creatorId && creatorId.toString() === userId.toString();
-  const hasPrivilegedAccess = isAdmin || isCreator;
+  const isCreator = creatorId && creatorId.toString() === userId.toString();
+  const hasPrivilegedAccess = isCreator;
 
   let enrollment = null;
 
@@ -68,7 +67,7 @@ const resolveCourseAccess = async (
     }
   }
 
-  return { course, userId, isAdmin, isCreator, hasPrivilegedAccess, enrollment };
+  return { course, userId, isCreator, hasPrivilegedAccess, enrollment };
 };
 
 /**
@@ -122,7 +121,6 @@ export const aggregateCourseProgress = async (userId, courseId) => {
  *   - per-lesson progress merged inline
  *
  * Access rules:
- *   - ADMIN       — full access, any course status, no enrollment required
  *   - CREATOR     — full access to own course, any status, no enrollment required
  *   - STUDENT     — course must be Published + user must have an Active enrollment
  *
@@ -154,10 +152,9 @@ export const getLearningSectionData = async (req, res) => {
     }
 
     const userId = req.user._id;
-    const isAdmin = req.user.role === "ADMIN";
     const isCreator =
-      !isAdmin && course.creator && course.creator._id.toString() === userId.toString();
-    const hasPrivilegedAccess = isAdmin || isCreator;
+      course.creator && course.creator._id.toString() === userId.toString();
+    const hasPrivilegedAccess = isCreator;
 
     let enrollment = null;
 
@@ -249,7 +246,7 @@ export const getLearningSectionData = async (req, res) => {
     // decremented on lesson/section/course delete) — reliable to use here.
     const totalLessons = course.stats?.lessonCount ?? 0;
 
-    // Creators and admins may have no student progress records.
+    // Creators may have no student progress records.
     // The aggregation returns safe zero defaults for them.
     const progressSummary = await aggregateCourseProgress(userId, courseId);
     const completedLessons = progressSummary.completedLessons;
@@ -284,7 +281,6 @@ export const getLearningSectionData = async (req, res) => {
 
       access: {
         isCreator,
-        isAdmin,
         isEnrolled,
         canLearn,
       },
@@ -322,7 +318,6 @@ export const getLearningSectionData = async (req, res) => {
  * Always scoped to req.user._id — never accepts a userId from the client.
  *
  * Access rules (identical to the Learning Section endpoint):
- *   - ADMIN       — any course, any status, no enrollment required → zeros
  *   - CREATOR     — own course, any status, no enrollment required → zeros
  *   - STUDENT     — course must be Published + Active enrollment required
  */
@@ -352,7 +347,7 @@ export const getCourseProgress = async (req, res) => {
 
     // ── 4. Privileged users: return stable zero progress ─────────────────────
     //
-    // Creators and admins are not expected to have enrollment-backed progress
+    // Creators are not expected to have enrollment-backed progress
     // records.  Return the authoritative total so the UI can render
     // "0 / N completed" without a separate course-fetch.
     if (hasPrivilegedAccess) {

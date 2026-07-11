@@ -17,19 +17,13 @@ export const checkLessonAccess = async (req, res, next) => {
       return res.status(404).json({ error: "Lesson not found" });
     }
 
-    // 3. Admin access
-    if (req.user.role === "ADMIN") {
-      req.lesson = lesson; // Attach for convenience
-      return next();
-    }
-
-    // 4. Fetch the course
+    // 3. Fetch the course
     const course = await Course.findById(lesson.course);
     if (!course) {
       return res.status(404).json({ error: "Associated course not found" });
     }
 
-    // 5. Creator access
+    // 4. Creator access (course owner)
     if (course.creator.toString() === req.user._id.toString()) {
       req.lesson = lesson;
       return next();

@@ -26,7 +26,7 @@ export const createLesson = async (req, res) => {
       return errorResponse(res, 400, "Section does not belong to the specified course");
     }
 
-    if (req.user.role !== "ADMIN" && courseExists.creator.toString() !== req.user._id.toString()) {
+    if (courseExists.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -66,7 +66,7 @@ export const getLessonsBySection = async (req, res) => {
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
     const user = req.user;
-    const isCreator = user && (user.role === "ADMIN" || course.creator.toString() === user._id.toString());
+    const isCreator = user && course.creator.toString() === user._id.toString();
 
     if (course.status !== "Published" && !isCreator) {
       return errorResponse(res, 403, "This course is not published");
@@ -126,7 +126,7 @@ export const updateLesson = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this lesson");
     }
 
@@ -154,7 +154,7 @@ export const deleteLesson = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this lesson");
     }
 
@@ -198,7 +198,7 @@ export const getMyLessonsBySection = async (req, res) => {
     const course = await Course.findById(section.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to view lessons for this section");
     }
 
@@ -220,7 +220,7 @@ export const getMyLessonById = async (req, res) => {
     const course = await Course.findById(lesson.course);
     if (!course) return errorResponse(res, 404, "Associated course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to view this lesson");
     }
 

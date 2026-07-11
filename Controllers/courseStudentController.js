@@ -31,7 +31,7 @@ export const getCourseById = async (req, res) => {
     const course = await Course.findById(id).populate("creator", "username email").populate("thumbnail").populate("trailer");
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator._id.toString() === req.user._id.toString());
+    const isCreator = req.user && course.creator._id.toString() === req.user._id.toString();
     if (course.status !== "Published" && !isCreator) {
       return errorResponse(res, 403, "This course is not published");
     }
@@ -54,7 +54,7 @@ export const getCourseDetails = async (req, res) => {
     const sections = await Section.find({ course: id }).sort({ order: 1 }).lean();
     const lessons = await Lesson.find({ course: id }).sort({ order: 1 }).populate("video").lean();
 
-    const isCreator = req.user && (req.user.role === "ADMIN" || course.creator._id.toString() === req.user._id.toString());
+    const isCreator = req.user && course.creator._id.toString() === req.user._id.toString();
     if (course.status !== "Published" && !isCreator) {
       return errorResponse(res, 403, "This course is not published");
     }

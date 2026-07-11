@@ -30,15 +30,13 @@ export const assertAdminCanManageUser = (actor, target) => {
     };
   }
 
-  const roleRank = { STUDENT: 1, CREATOR: 2, ADMIN: 3 };
-  const actorRank = roleRank[actor.role] || 0;
-  const targetRank = roleRank[target.role] || 0;
-
-  if (actorRank <= targetRank) {
+  // Only STUDENT accounts are manageable through administrative user-management endpoints.
+  // CREATOR accounts cannot be blocked, deleted, force-logged-out, or managed this way.
+  if (target.role !== "STUDENT") {
     throw {
       isOperational: true,
       statusCode: 403,
-      message: "You cannot manage a user of equal or higher rank",
+      message: "Administrative user-management operations can only target STUDENT accounts",
     };
   }
 };
@@ -98,7 +96,9 @@ export const deleteUser = async (userId) => {
   const role = user.role;
 
   // 1. Enforce Creator Preconditions
-  if (role === "CREATOR" || role === "ADMIN") {
+  // Note: Only STUDENT accounts are reachable via administrative delete (assertAdminCanManageUser
+  // already rejects CREATOR targets), but this guard is kept as a defense-in-depth safety net.
+  if (role === "CREATOR") {
     const ownedCoursesCount = await Course.countDocuments({ creator: userId });
     if (ownedCoursesCount > 0) {
       throw {

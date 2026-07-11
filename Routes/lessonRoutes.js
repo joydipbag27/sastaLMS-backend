@@ -23,7 +23,7 @@ router.post(
   "/",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   createLesson,
 );
 
@@ -32,14 +32,14 @@ router.get("/section/:sectionId", optionalAuthenticate, getLessonsBySection);
 router.get(
   "/creator/section/:sectionId",
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getMyLessonsBySection,
 );
 
 router.get(
   "/creator/:id",
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   getMyLessonById,
 );
 
@@ -60,7 +60,7 @@ router.patch(
   "/:id",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   updateLesson,
 );
 
@@ -68,7 +68,7 @@ router.delete(
   "/:id",
   customRateLimit(1, 10),
   authenticate,
-  authorize(roles.CREATOR, roles.ADMIN),
+  authorize(roles.CREATOR),
   deleteLesson,
 );
 

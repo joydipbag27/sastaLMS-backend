@@ -81,7 +81,7 @@ export const updateCourse = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to update this course");
     }
 
@@ -101,7 +101,7 @@ export const publishCourse = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to publish this course");
     }
 
@@ -156,7 +156,7 @@ export const unpublishCourse = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to unpublish this course");
     }
 
@@ -180,7 +180,7 @@ export const deleteCourse = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this course");
     }
 
@@ -236,7 +236,7 @@ export const getThumbnailUploadUrl = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -277,7 +277,7 @@ export const confirmThumbnail = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -356,7 +356,7 @@ export const deleteThumbnail = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this thumbnail");
     }
 
@@ -394,7 +394,7 @@ export const getTrailerUploadUrl = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -435,7 +435,7 @@ export const confirmTrailer = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to modify this course");
     }
 
@@ -514,7 +514,7 @@ export const deleteTrailer = async (req, res) => {
     const course = await Course.findById(id);
     if (!course) return errorResponse(res, 404, "Course not found");
 
-    if (req.user.role !== "ADMIN" && course.creator.toString() !== req.user._id.toString()) {
+    if (course.creator.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "You do not have permission to delete this trailer");
     }
 
