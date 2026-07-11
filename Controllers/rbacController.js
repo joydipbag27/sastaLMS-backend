@@ -259,6 +259,17 @@ export const getPaymentInvoice = async (req, res) => {
   }
 };
 
+// GET TOTAL USER COUNT (STUDENT accounts count)
+export const getUserCount = async (req, res) => {
+  try {
+    const totalUsers = await User.countDocuments({ role: "STUDENT" });
+    return successResponse(res, 200, "User count fetched successfully", { total: totalUsers });
+  } catch (err) {
+    console.error("[getUserCount] Unexpected error:", err);
+    return errorResponse(res, 500, "Failed to fetch user count");
+  }
+};
+
 // GET ALL MANAGEABLE USERS (STUDENT accounts only)
 export const getAllUsers = async (req, res) => {
   const ownId = req.user._id;
