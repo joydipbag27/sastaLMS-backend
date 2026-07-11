@@ -7,7 +7,6 @@ import {
    adminLogout,
    promoteToCreator,
    getAllUsers,
-   getUserCount,
    getSessionStatus,
    getAdminDashboardSummary,
    getAdminPaymentSummary,
@@ -54,8 +53,6 @@ router.get(
   getPaymentInvoice,
 );
 
-// Returns total count of manageable STUDENT accounts
-router.get("/count", customRateLimit(1, 5), authorize(roles.CREATOR), getUserCount);
 
 // Returns manageable STUDENT accounts only (CREATOR accounts are excluded)
 router.get("/", customRateLimit(1, 5), authorize(roles.CREATOR), getAllUsers);
