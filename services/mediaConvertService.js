@@ -5,13 +5,14 @@ import {
 } from "@aws-sdk/client-mediaconvert";
 import { jobTemplate } from "./jobTemplate.js";
 
+import { localAwsCredentials } from "../config/awsCredentials.js";
+
 export const mediaConvertClient = new MediaConvertClient({
   region: process.env.AWS_REGION,
   endpoint: process.env.MEDIACONVERT_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
+  ...(localAwsCredentials && {
+    credentials: localAwsCredentials,
+  }),
 });
 
 

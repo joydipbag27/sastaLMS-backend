@@ -9,12 +9,13 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+import { localAwsCredentials } from "./awsCredentials.js";
+
 export const awsS3Client = new S3Client({
   region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  },
+  ...(localAwsCredentials && {
+    credentials: localAwsCredentials,
+  }),
 });
 
 export const generateThumbnailUploadUrl = async (mediaId, mimeType) => {
