@@ -120,19 +120,60 @@ functions:
     timeout: 30
     name: veolmsVideoProcessHandler-${sls:stage}
     handler: lambda/videoProcessHandler/handler.handler
-    events:
-      - eventBridge:
-          eventBus: default
-          pattern:
-            source:
-              - aws.mediaconvert
-            detail-type:
-              - MediaConvert Job State Change
-            detail:
-              status:
-                - COMPLETE
-                - ERROR
     package:
       patterns:
         - "!**"
         - "lambda/videoProcessHandler/**"
+
+resources:
+  Resources:
+    EventBridgeInvokeLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - events.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: InvokeVideoProcessHandler
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource:
+                    - !GetAtt VideoProcessHandlerLambdaFunction.Arn
+
+    MediaConvertEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: veolms-media-process-complete-${sls:stage}
+        EventBusName: default
+        State: ENABLED
+        EventPattern:
+          source:
+            - aws.mediaconvert
+          detail-type:
+            - MediaConvert Job State Change
+          detail:
+            status:
+              - COMPLETE
+              - ERROR
+        Targets:
+          - Arn: !GetAtt VideoProcessHandlerLambdaFunction.Arn
+            Id: VideoProcessHandlerTarget
+            RoleArn: !GetAtt EventBridgeInvokeLambdaRole.Arn
+
+    MediaConvertEventLambdaPermission:
+      Type: AWS::Lambda::Permission
+      Properties:
+        Action: lambda:InvokeFunction
+        FunctionName: !GetAtt VideoProcessHandlerLambdaFunction.Arn
+        Principal: events.amazonaws.com
+        SourceArn: !GetAtt MediaConvertEventRule.Arn
