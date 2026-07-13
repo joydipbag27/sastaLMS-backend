@@ -1,0 +1,94 @@
+useDotenv: true
+service: veolms-backend
+
+provider:
+  name: aws
+  runtime: nodejs22.x
+  region: ap-south-1
+  deploymentMethod: direct
+  stage: ${opt:stage, 'dev'}
+  httpApi:
+    name: veolmsApi-${sls:stage}
+  environment:
+    NODE_ENV: production
+    CLIENT_URL: ${env:CLIENT_URL}
+    MONGODB_URI: ${env:MONGODB_URI}
+    SESSION_SECRET: ${env:SESSION_SECRET}
+    REDIS_URL: ${env:REDIS_URL}
+    RESEND_KEY: ${env:RESEND_KEY}
+    BLACK_BLAZE_ENDPOINT: ${env:BLACK_BLAZE_ENDPOINT}
+    BLACK_BLAZE_REGION: ${env:BLACK_BLAZE_REGION}
+    BLACK_BLAZE_ACCESS_KEY_ID: ${env:BLACK_BLAZE_ACCESS_KEY_ID}
+    BLACK_BLAZE_SECRET: ${env:BLACK_BLAZE_SECRET}
+    BUCKET_NAME: ${env:BUCKET_NAME}
+    GOOGLE_CLIENT_ID: ${env:GOOGLE_CLIENT_ID}
+
+    AWS_THUMBNAIL_BUCKET: ${env:AWS_THUMBNAIL_BUCKET}
+    MEDIACONVERT_ROLE: ${env:MEDIACONVERT_ROLE}
+    MEDIACONVERT_QUEUE: ${env:MEDIACONVERT_QUEUE}
+    MEDIACONVERT_ENDPOINT: ${env:MEDIACONVERT_ENDPOINT}
+    MEDIACONVERT_INPUT_BUCKET: ${env:MEDIACONVERT_INPUT_BUCKET}
+    MEDIACONVERT_OUTPUT_BUCKET: ${env:MEDIACONVERT_OUTPUT_BUCKET}
+    BACKEND_URL: ${env:BACKEND_URL}
+    LAMBDA_SECRET: ${env:LAMBDA_SECRET}
+    CLOUDFLARE_WORKER_URL: ${env:CLOUDFLARE_WORKER_URL}
+    PLAYBACK_TOKEN_SECRET: ${env:PLAYBACK_TOKEN_SECRET}
+    PLAYBACK_TOKEN_TTL_SECONDS: ${env:PLAYBACK_TOKEN_TTL_SECONDS}
+    RCLONE_PATH: /var/task/rclone-bin/rclone
+    RCLONE_S3_REMOTE: ${env:RCLONE_S3_REMOTE}
+    RCLONE_B2_REMOTE: ${env:RCLONE_B2_REMOTE}
+    RCLONE_TRANSFERS: ${env:RCLONE_TRANSFERS}
+    RCLONE_CHECKERS: ${env:RCLONE_CHECKERS}
+    RCLONE_APP_RETRY_ROUNDS: ${env:RCLONE_APP_RETRY_ROUNDS}
+    LOG_DIR: /tmp
+    RAZORPAY_KEY_ID: ${env:RAZORPAY_KEY_ID}
+    RAZORPAY_KEY_SECRET: ${env:RAZORPAY_KEY_SECRET}
+    RAZORPAY_WEBHOOK_SECRET: ${env:RAZORPAY_WEBHOOK_SECRET}
+
+package:
+  individually: true
+
+functions:
+  backend:
+    memorySize: 1024
+    timeout: 900
+    events:
+      - httpApi:
+          method: ANY
+          path: /
+      - httpApi:
+          method: ANY
+          path: /{proxy+}
+    name: veolmsBackend-${sls:stage}
+    handler: lambda.handler
+    package:
+      patterns:
+        - "!.git/**"
+        - "!.env*"
+        - "!server.js"
+        - "!*.log"
+        - "!logs/**"
+        - "!.github/**"
+        - "!lambda/videoProcessHandler/**"
+
+  videoProcessHandler:
+    memorySize: 256
+    timeout: 30
+    name: veolmsVideoProcessHandler-${sls:stage}
+    handler: lambda/videoProcessHandler/handler.handler
+    events:
+      - eventBridge:
+          eventBus: default
+          pattern:
+            source:
+              - aws.mediaconvert
+            detail-type:
+              - MediaConvert Job State Change
+            detail:
+              status:
+                - COMPLETE
+                - ERROR
+    package:
+      patterns:
+        - "!**"
+        - "lambda/videoProcessHandler/**"

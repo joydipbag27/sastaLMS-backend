@@ -1,4 +1,4 @@
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 import { sidSchema } from "../validators/authSchema.js";
 
 export const authenticate = async (req, res, next) => {
@@ -17,6 +17,7 @@ export const authenticate = async (req, res, next) => {
 
     let session;
     try {
+      const redisClient = getRedisClient();
       session = await redisClient.json.get(`session:${parsed.data}`);
     } catch {
       return res.status(503).json({ error: "Auth service unavailable" });

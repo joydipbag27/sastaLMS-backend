@@ -2,7 +2,7 @@ import User from "../Models/userModel.js";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import OTP from "../Models/otpModel.js";
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 import {
   changePassSchema,
   loginSchema,
@@ -60,6 +60,7 @@ export const Login = async (req, res) => {
     const isAuthenticated = await bcrypt.compare(password, user.password);
     if (!isAuthenticated) return errorResponse(res, 401, "Invalid credentials");
 
+    const redisClient = getRedisClient();
     const allSessions = await redisClient.ft.search("userIdIndex", `@userId:{${user._id}}`, { RETURN: [] });
     if (allSessions.total >= 2) {
       await redisClient.del(allSessions.documents[0].id);
@@ -99,6 +100,7 @@ export const CheckUserName = async (req, res) => {
     const isPassAvailable = req.user.isPassAvailable;
 
     const redisKey = `profile:${userId}`;
+    const redisClient = getRedisClient();
     const cached = await redisClient.json.get(redisKey);
     if (cached) return successResponse(res, 200, "User fetched", cached);
 
@@ -124,6 +126,7 @@ export const CheckUserName = async (req, res) => {
 export const Logout = async (req, res) => {
   try {
     const { sid } = req.signedCookies;
+    const redisClient = getRedisClient();
     await redisClient.json.del(`session:${sid}`);
     await redisClient.json.del(`profile:${req.user._id}`);
     res.clearCookie("sid", { httpOnly: true });
@@ -137,6 +140,7 @@ export const Logout = async (req, res) => {
 // LOGOUT ALL DEVICES
 export const LogoutAllDevices = async (req, res) => {
   try {
+    const redisClient = getRedisClient();
     const data = await redisClient.ft.search("userIdIndex", `@userId:{${req.user._id}}`);
     if (!data.documents.length) return errorResponse(res, 404, "No active sessions found");
 
@@ -173,6 +177,7 @@ export const changePass = async (req, res) => {
     user.password = hashedPassword;
     await user.save();
 
+    const redisClient = getRedisClient();
     const sessions = await redisClient.ft.search("userIdIndex", `@userId:{${req.user._id}}`);
     if (sessions.documents.length) {
       await redisClient.del(sessions.documents.map((e) => e.id));
@@ -207,6 +212,7 @@ export const forgotPassword = async (req, res) => {
     user.password = hashedPassword;
     await user.save();
 
+    const redisClient = getRedisClient();
     const sessions = await redisClient.ft.search("userIdIndex", `@userId:{${user._id}}`);
     if (sessions.documents.length) {
       await redisClient.del(sessions.documents.map((e) => e.id));
@@ -240,11 +246,12 @@ export const setNewPass = async (req, res) => {
     user.password = hashedPassword;
     await user.save();
 
-    const sessions = await redisClient.ft.search("userIdIndex", `@userId:{${req.user._id}}`);
+    const redisClientInstance = getRedisClient();
+    const sessions = await redisClientInstance.ft.search("userIdIndex", `@userId:{${req.user._id}}`);
     if (sessions.documents.length) {
-      await redisClient.del(sessions.documents.map((e) => e.id));
+      await redisClientInstance.del(sessions.documents.map((e) => e.id));
     }
-    await redisClient.json.del(`profile:${req.user._id}`);
+    await redisClientInstance.json.del(`profile:${req.user._id}`);
     await otpInfo.deleteOne();
     res.clearCookie("sid", { httpOnly: true });
 

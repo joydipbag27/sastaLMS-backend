@@ -98,7 +98,8 @@ const generateRcloneConfigContent = () => {
 const ensureRcloneConfig = async () => {
   if (_cachedConfigPath) return _cachedConfigPath;
 
-  const configDir = path.join(process.cwd(), "logs");
+  const logDir = process.env.LOG_DIR || process.cwd();
+  const configDir = path.join(logDir, "logs");
   const configPath = path.join(configDir, ".rclone.conf");
 
   await fs.mkdir(configDir, { recursive: true });
@@ -446,14 +447,16 @@ const runSingleFileCopy = (key, s3Bucket, b2Bucket) => {
  * @param {string} mediaId
  * @returns {string}
  */
-const getLogPath = (mediaId) =>
-  path.join(
-    process.cwd(),
+const getLogPath = (mediaId) => {
+  const logDir = process.env.LOG_DIR || process.cwd();
+  return path.join(
+    logDir,
     "logs",
     "copy-failures",
     mediaId,
     "failed-upload.log",
   );
+};
 
 /**
  * Writes (or overwrites) the failed-upload.log for a mediaId.
@@ -551,7 +554,8 @@ export const deleteFailedUploadLog = async (mediaId) => {
  * @param {object} summary
  */
 const appendTransferLog = async (mediaId, summary) => {
-  const logPath = path.join(process.cwd(), "logs", "media-transfer.log");
+  const logDir = process.env.LOG_DIR || process.cwd();
+  const logPath = path.join(logDir, "logs", "media-transfer.log");
   try {
     await fs.mkdir(path.dirname(logPath), { recursive: true });
     const entry = JSON.stringify({
