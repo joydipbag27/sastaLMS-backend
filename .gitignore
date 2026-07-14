@@ -21,6 +21,7 @@ node_modules/
 wrangler.toml
 .rclone.conf
 .agents
+.env.*
 
 .dev.vars*
 !.dev.vars.example
