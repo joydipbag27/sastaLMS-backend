@@ -5,9 +5,11 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "node --watch --env-file=.env server.js",
+    "dev": "node --watch --env-file=.env.local server.js",
     "start": "node server.js",
-    "build": "npm i"
+    "build": "npm i",
+    "deploy": "dotenv -e .env.dev -- serverless deploy --stage dev --aws-profile veolms-deployer",
+    "deploy:print": "dotenv -e .env.dev -- serverless print --stage dev"
   },
   "keywords": [],
   "author": "",
@@ -27,9 +29,13 @@
     "helmet": "^8.1.0",
     "mongoose": "^8.19.2",
     "prettier": "^3.6.2",
+    "razorpay": "^2.9.5",
     "redis": "^5.10.0",
     "resend": "^6.10.0",
-    "razorpay": "^2.9.5",
+    "serverless-http": "^4.0.0",
     "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^11.0.0"
   }
 }

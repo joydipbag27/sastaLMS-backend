@@ -1,4 +1,4 @@
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 import { sidSchema } from "../validators/authSchema.js";
 
 /**
@@ -23,6 +23,7 @@ export const optionalAuthenticate = async (req, res, next) => {
 
     let session;
     try {
+      const redisClient = getRedisClient();
       session = await redisClient.json.get(`session:${parsed.data}`);
     } catch {
       return next(); // Redis unavailable — degrade gracefully

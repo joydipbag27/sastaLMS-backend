@@ -80,12 +80,12 @@ ALLOW_LIST_BUCKET = "false"
 
 ### Configuration
 
-| Variable | Description |
-|----------|-------------|
-| `B2_APPLICATION_KEY_ID` | Backblaze Application Key ID |
-| `B2_ENDPOINT` | Backblaze S3 Endpoint |
-| `BUCKET_NAME` | Private Backblaze bucket |
-| `ALLOW_LIST_BUCKET` | Disabled because listing bucket contents is unnecessary |
+| Variable                | Description                                             |
+| ----------------------- | ------------------------------------------------------- |
+| `B2_APPLICATION_KEY_ID` | Backblaze Application Key ID                            |
+| `B2_ENDPOINT`           | Backblaze S3 Endpoint                                   |
+| `BUCKET_NAME`           | Private Backblaze bucket                                |
+| `ALLOW_LIST_BUCKET`     | Disabled because listing bucket contents is unnecessary |
 
 ---
 

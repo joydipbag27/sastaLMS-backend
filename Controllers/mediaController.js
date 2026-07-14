@@ -322,7 +322,8 @@ export const mediaProcessCompleted = async (req, res) => {
   const { mediaId, jobId, status, errorMessage } = data;
 
   // Log details to media-processing.log
-  const logFilePath = path.join(process.cwd(), "logs", "media-processing.log");
+  const logDir = process.env.LOG_DIR || process.cwd();
+  const logFilePath = path.join(logDir, "logs", "media-processing.log");
   try {
     await fs.mkdir(path.dirname(logFilePath), { recursive: true });
     const logEntry = {

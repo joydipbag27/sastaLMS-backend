@@ -5,7 +5,7 @@ import Enrollment from "../Models/enrollmentModel.js";
 import LessonProgress from "../Models/lessonProgressModel.js";
 import OTP from "../Models/otpModel.js";
 import Media from "../Models/mediaModel.js";
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 
 // Regex matching the project's existing ObjectId validation convention
 const OBJECT_ID_REGEX = /^[a-f\d]{24}$/i;
@@ -49,6 +49,7 @@ export const assertAdminCanManageUser = (actor, target) => {
  */
 export const invalidateUserSessions = async (userId) => {
   try {
+    const redisClient = getRedisClient();
     const data = await redisClient.ft.search("userIdIndex", `@userId:{${userId}}`);
     const keys = data.documents.map((elem) => elem.id);
     if (keys.length > 0) {
@@ -68,6 +69,7 @@ export const invalidateUserSessions = async (userId) => {
  */
 export const invalidateUserProfileCache = async (userId) => {
   try {
+    const redisClient = getRedisClient();
     await redisClient.del(`profile:${userId}`);
   } catch (err) {
     console.error(`[invalidateUserProfileCache] Failed to delete profile cache for user ${userId}:`, err);

@@ -4,7 +4,7 @@ import User from "../Models/userModel.js";
 import OTP from "../Models/otpModel.js";
 import { googleClient } from "../services/googleAuthService.js";
 import { sendEmail } from "../services/email/sendEmailOtp.js";
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 import { sendOtpSchema, verifyOtpSchema } from "../validators/authSchema.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
@@ -29,6 +29,7 @@ export const sendOtp = async (req, res) => {
     if (purpose === "CHANGE_PASSWORD" || purpose === "SET_PASSWORD") {
       const { sid } = req.signedCookies;
       if (!sid) return errorResponse(res, 401, "Unauthorized");
+      const redisClient = getRedisClient();
       const session = await redisClient.json.get(`session:${sid}`);
       if (!session?.userId) return errorResponse(res, 401, "Session expired or invalid");
       const user = await User.findById(session.userId).lean();
@@ -77,6 +78,7 @@ export const verifyOtp = async (req, res) => {
     if (purpose === "CHANGE_PASSWORD" || purpose === "SET_PASSWORD") {
       const { sid } = req.signedCookies;
       if (!sid) return errorResponse(res, 401, "Unauthorized");
+      const redisClient = getRedisClient();
       const session = await redisClient.json.get(`session:${sid}`);
       if (!session?.userId) return errorResponse(res, 401, "Session expired or invalid");
       const user = await User.findById(session.userId).lean();
@@ -116,6 +118,8 @@ export const loginWithGoogle = async (req, res) => {
     if (!payload?.email || !payload.email_verified) return errorResponse(res, 401, "Unverified Google account");
 
     let targetUser = await User.findOne({ email: payload.email });
+
+    const redisClient = getRedisClient();
 
     if (!targetUser) {
       const userId = new mongoose.Types.ObjectId();

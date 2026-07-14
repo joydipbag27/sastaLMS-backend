@@ -4,7 +4,7 @@ import Enrollment from "../Models/enrollmentModel.js";
 import Payment from "../Models/paymentModel.js";
 import { razorpayInstance } from "../config/razorpay.js";
 import mongoose from "mongoose";
-import { redisClient } from "../config/redis.js";
+import { getRedisClient } from "../config/redis.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import {
   deleteUser,
@@ -320,6 +320,7 @@ export const getSessionStatus = async (req, res) => {
       throw err;
     }
 
+    const redisClient = getRedisClient();
     const session = await redisClient.ft.search("userIdIndex", `@userId:{${userId}}`);
     return successResponse(res, 200, "Session status fetched", { isLoggedIn: session.total > 0 });
   } catch (err) {
