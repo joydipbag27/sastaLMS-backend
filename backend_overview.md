@@ -1,6 +1,6 @@
-# veoLMS — Backend Overview
+# SastaLMS — Backend Overview
 
-A comprehensive reference for the features, architecture, middleware pipeline, data models, and API routes of the veoLMS backend.
+A comprehensive reference for the features, architecture, middleware pipeline, data models, and API routes of the SastaLMS backend.
 
 ---
 
@@ -35,20 +35,19 @@ A comprehensive reference for the features, architecture, middleware pipeline, d
 - **Set Password** — Allows users who signed up via Google (no password) to set one.
 
 ### 👤 Role-Based Access Control (RBAC)
-Three roles are defined in `config/roles.js`:
+Two roles are defined in `config/roles.js`:
 
 | Role | Capabilities |
 |---|---|
 | `STUDENT` | Enroll in courses, access allowed lessons, purchase courses |
-| `CREATOR` | All STUDENT abilities + create/manage their own courses, sections, lessons, uploads |
-| `ADMIN` | Full access to everything including user management and manual processing triggers |
+| `CREATOR` | All STUDENT abilities + create/manage their own courses, sections, lessons, uploads + user management and manual processing triggers |
 
-**Admin operations:**
+**Creator operations (gated by `CREATOR` role):**
 - View all users (paginated)
 - Check a specific user's session status
 - Force-logout any user's session
 - Block / Unblock users
-- Change a user's role
+- Promote a student to creator
 - Permanently delete a user account
 
 ### 📚 LMS Content Management
@@ -95,13 +94,13 @@ Three roles are defined in `config/roles.js`:
 Lesson and course resource access is determined by strict middleware and controller logic. The authorization hierarchy and rules are:
 
 #### 1. General Access Rules
-- **Creator / Admin Access**: The course creator (or an admin) always retains full access to manage and read their own courses, sections, lessons, and media files, regardless of whether the course `status` is `Draft` or `Published`.
-- **Draft Restriction**: All course metadata, sections, lesson metadata, and media of a `Draft` course are entirely private to the creator/admin. Non-creators (including enrolled students) will be blocked with a `403 Forbidden` error.
+- **Creator Access**: The course creator always retains full access to manage and read their own courses, sections, lessons, and media files, regardless of whether the course `status` is `Draft` or `Published`.
+- **Draft Restriction**: All course metadata, sections, lesson metadata, and media of a `Draft` course are entirely private to the creator. Non-creators (including enrolled students) will be blocked with a `403 Forbidden` error.
 - **Temporary Lock (Draft State)**: If a creator changes a published course back to `Draft`, existing enrollments are preserved, but students temporarily lose all access to read the course, sections, lessons, or media. Access is restored once the course is published again.
 
 #### 2. Media Playback Authorization
 Media playback and token generation are authorized under the following conditions:
-- The requester is the course creator or an admin.
+- The requester is the course creator.
 - **OR** The requester is **authenticated**, the parent course `status` is `Published` **AND** one of:
   - The lesson is marked as a preview lesson (`isPreview === true`).
   - The user has an `Active` enrollment in the course.
@@ -122,7 +121,7 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
   - **Course Thumbnail/Trailer**: Dedicated presigned upload and confirm endpoints exist under course controller scopes (`POST /course/:id/thumbnail/upload-url`, `POST /course/:id/trailer/upload-url`).
 - **Robust Verification**: When confirming, the backend queries the storage provider to verify the file exists and that its size/mimeType matches expectations.
 - **Robust Cleanup / Version Deletion**: Handles versioned objects and delete markers on B2/S3 during media deletion.
-- **COPY_PENDING Recovery**: Admin endpoint `POST /media/:id/retry-transfer` allows retrying file syncs to Backblaze B2 using custom rclone script logging.
+- **COPY_PENDING Recovery**: Creator-restricted endpoint `POST /media/:id/retry-transfer` allows retrying file syncs to Backblaze B2 using custom rclone script logging.
 
 ---
 
@@ -146,9 +145,10 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 | Field | Type | Notes |
 |---|---|---|
 | `username` | String | 3–100 chars, required |
-| `email` | String | Unique, validated format |
+| `email` | String | Validated format (no unique constraint at schema level) |
 | `password` | String | Optional (Google users may not have one) |
-| `role` | String | `STUDENT` \| `CREATOR` \| `ADMIN`, default `STUDENT` |
+| `rootDirId` | ObjectId | Optional, internal use |
+| `role` | String | `STUDENT` \| `CREATOR`, default `STUDENT` |
 | `isBlocked` | Boolean | Default `false` |
 
 ### `Course`
@@ -182,7 +182,7 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 | `description` | String | Optional |
 | `course` | ObjectId → Course | Required, indexed |
 | `section` | ObjectId → Section | Required, indexed |
-| `video` | ObjectId → Media | Required, references a Media document |
+| `video` | ObjectId → Media | Optional in schema (business rule: required for publishing) |
 | `duration` | Number | Seconds, default `0` |
 | `isPreview` | Boolean | Default `false` |
 | `order` | Number | Required; unique within section |
@@ -208,6 +208,7 @@ To prevent unauthorized media downloads, the media ID (`video` field) is omitted
 | `duration` | Number | Active watch duration in seconds |
 | `maxPositionReached` | Number | Max playback position in seconds |
 | `lastPosition` | Number | Last playback position in seconds |
+| `lastWatchedAt` | Date | Timestamp of last watch activity, default `null` |
 | `completed` | Boolean | Completion flag |
 | `completedAt` | Date | Completion timestamp |
 
@@ -252,7 +253,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `authenticate` | `middlewares/authenticate.js` | Validates signed `sid` cookie via Redis. Populates `req.user`. Rejects with `401` if missing or expired. |
 | `optionalAuthenticate` | `middlewares/optionalAuthenticate.js` | Same as `authenticate` but does **not** reject unauthenticated requests. Used on routes that serve tiered responses. |
 | `authorize` | `middlewares/authorize.js` | Role guard. Rejects with `403` if `req.user.role` is not in the allowed roles list. |
-| `checkLessonAccess` | `middlewares/lessonAccess.js` | LMS access control middleware. Enforces the Admin → Creator → Preview → Enrolled hierarchy. |
+| `checkLessonAccess` | `middlewares/lessonAccess.js` | LMS access control middleware. Enforces the Creator → Preview → Enrolled hierarchy. |
 | `customRateLimit` | `middlewares/rateLimit.js` | Wraps `express-rate-limit`. Called as `customRateLimit(windowMinutes, maxRequests)`. |
 | Error Handler | `app.js` (global) | Catches Mongoose validation errors, duplicate key errors (`11000`), operational errors, and unknown errors. |
 
@@ -264,8 +265,7 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 > - 🔓 Public
 > - 🔑 Requires authentication (`authenticate`)
 > - 👁️ Optional authentication (`optionalAuthenticate`)
-> - 🛡️ Requires role (`CREATOR` or `ADMIN`)
-> - 👑 Requires `ADMIN` role only
+> - 🛡️ Requires `CREATOR` role
 
 ---
 
@@ -294,18 +294,28 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 
 ---
 
-### RBAC / Admin Routes — `/users`
+### Creator Routes — `/users` and `/admin`
 
-> All routes require `authenticate` + `authorize`.
+> All routes require `authenticate` + `authorize(roles.CREATOR)`. The same routes are mounted at both `/users` and `/admin` prefixes in `app.js`.
 
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `GET` | `/users/` | 🔑🛡️ | 5/min | Get all users (paginated) |
 | `GET` | `/users/session/:id` | 🔑🛡️ | 20/min | Get session status for a user |
 | `POST` | `/users/logout` | 🔑🛡️ | 1/min | Force-logout a user |
-| `DELETE` | `/users/delete` | 🔑👑 | 1/min | Permanently delete a user |
-| `PATCH` | `/users/block` | 🔑👑 | 5/min | Block or unblock a user |
-| `PATCH` | `/users/role` | 🔑👑 | 1/min | Change a user's role |
+| `DELETE` | `/users/delete` | 🔑🛡️ | 1/min | Permanently delete a user |
+| `PATCH` | `/users/block` | 🔑🛡️ | 5/min | Block or unblock a user |
+| `PATCH` | `/users/users/:userId/promote` | 🔑🛡️ | 1/min | Promote a student to CREATOR (irreversible through API) |
+
+**Dashboard & Payment Analytics (mounted at `/admin`):**
+
+| Method | Path | Auth | Rate Limit | Description |
+|---|---|---|---|---|
+| `GET` | `/admin/dashboard/summary` | 🔑🛡️ | 10/min | Get admin dashboard summary |
+| `GET` | `/admin/payments/summary` | 🔑🛡️ | 10/min | Get payment summary stats |
+| `GET` | `/admin/payments/revenue-by-course` | 🔑🛡️ | 10/min | Get revenue breakdown by course |
+| `GET` | `/admin/payments/successful` | 🔑🛡️ | 10/min | Get successful payment records |
+| `GET` | `/admin/payments/:paymentId/invoice` | 🔑🛡️ | 10/min | Get invoice for a specific payment |
 
 ---
 
@@ -339,10 +349,10 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | Method | Path | Auth | Rate Limit | Description |
 |---|---|---|---|---|
 | `POST` | `/section/` | 🔑🛡️ | 10/min | Create a section (order must be unique within course) |
-| `GET` | `/section/course/:courseId` | 👁️ | — | Get all sections for a course (Draft courses restricted to creator/admin) |
+| `GET` | `/section/course/:courseId` | 👁️ | — | Get all sections for a course (Draft courses restricted to creator) |
 | `GET` | `/section/creator/course/:courseId` | 🔑🛡️ | — | Get creator's sections for a course |
 | `GET` | `/section/creator/:id` | 🔑🛡️ | — | Get a specific section (creator view) |
-| `GET` | `/section/:id` | 👁️ | — | Get a section by ID (Draft courses restricted to creator/admin) |
+| `GET` | `/section/:id` | 👁️ | — | Get a section by ID (Draft courses restricted to creator) |
 | `PATCH` | `/section/:id` | 🔑🛡️ | 10/min | Update a section (order conflict check on change) |
 | `DELETE` | `/section/:id` | 🔑🛡️ | 10/min | Delete a section and all its lessons |
 
@@ -374,7 +384,16 @@ Stores short-lived OTPs for email verification and password resets (TTL-managed)
 | `POST` | `/media/s3/lesson/:lessonId/confirm` | 🔑🛡️ | 15/min | Verify S3 upload (size check & type check), starts processing pipeline |
 | `POST` | `/media/manual` | 🔑🛡️ | 15/min | Ingest manually prepared HLS/dash files into database |
 | `POST` | `/media/manual/:mediaId/verify` | 🔑🛡️ | 15/min | Verify files of manually ingested media on storage bucket |
-| `POST` | `/media/:id/retry-transfer` | 🔑👑 | 5/min | Retry pending file transfers for `COPY_PENDING` media |
+| `POST` | `/media/:id/retry-transfer` | 🔑🛡️ | 5/min | Retry pending file transfers for `COPY_PENDING` media |
+
+---
+
+### Learning Routes — `/learning`
+
+| Method | Path | Auth | Rate Limit | Description |
+|---|---|---|---|---|
+| `GET` | `/learning/courses/:courseId/sections/:sectionId` | 🔑 | — | Get section learning data: course summary, access flags, enrollment, course-level progress, section with lessons and per-lesson progress merged inline |
+| `GET` | `/learning/courses/:courseId/progress` | 🔑 | — | Get minimal course completion summary (total lessons, completed lessons, percentage) |
 
 ---
 

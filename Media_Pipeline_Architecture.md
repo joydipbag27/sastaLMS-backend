@@ -1,4 +1,4 @@
-# veoLMS Media Processing & Streaming Pipeline
+# SastaLMS Media Processing & Streaming Pipeline
 
 **Version:** 3.0\
 **Purpose:** Explain the complete video pipeline from upload to playback
@@ -62,7 +62,7 @@ HLS.js Player
 
 ### Option B: Manual Ingestion Pipeline (Processed locally, bypassing AWS)
 ``` text
-Creator / Admin
+Creator
    │
    ▼
 Create Manual Media Metadata (POST /media/manual)
@@ -476,4 +476,4 @@ COPY_PENDING / FAILED
 
 # Conclusion
 
-The veoLMS media pipeline provides two ingestion paths—automated AWS MediaConvert and low-cost manual FFmpeg+rclone—converging at the same Backblaze B2 storage structure and Cloudflare Worker playback flow. This ensures cost-efficiency, flexibility, and architectural clean separation.
+The SastaLMS media pipeline provides two ingestion paths—automated AWS MediaConvert and low-cost manual FFmpeg+rclone—converging at the same Backblaze B2 storage structure and Cloudflare Worker playback flow. This ensures cost-efficiency, flexibility, and architectural clean separation.

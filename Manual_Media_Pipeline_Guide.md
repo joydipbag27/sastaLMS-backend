@@ -1,6 +1,6 @@
-# veoLMS Manual Video Processing Guide
+# SastaLMS Manual Video Processing Guide
 
-This document explains how to process and upload videos using the veoLMS manual low-cost media pipeline.
+This document explains how to process and upload videos using the SastaLMS manual low-cost media pipeline.
 
 This pipeline is separate from the existing AWS MediaConvert pipeline.
 
@@ -10,7 +10,7 @@ The manual pipeline uses:
 - HLS with 360p and 720p variants.
 - PowerShell for running the reusable processing script.
 - rclone for uploading processed HLS files to Backblaze B2.
-- The veoLMS backend for creating Media metadata and verifying the final uploaded media.
+- The SastaLMS backend for creating Media metadata and verifying the final uploaded media.
 
 The complete flow is:
 
@@ -182,7 +182,7 @@ Check existing rclone remotes:
 rclone listremotes
 ```
 
-The veoLMS B2 remote should appear:
+The SastaLMS B2 remote should appear:
 
 ```text
 veolms-b2:
@@ -280,19 +280,9 @@ If the remote name, bucket name, or destination prefix changes, update `$B2Remot
 
 # 6. Create Manual Media Metadata
 
-Open the veoLMS frontend and use the manual media creation flow.
+Open the SastaLMS frontend and use the manual media creation flow.
 
-The authenticated user must be an authorized:
-
-```text
-ADMIN
-```
-
-or:
-
-```text
-CREATOR
-```
+The authenticated user must have the `CREATOR` role.
 
 Create the Media metadata.
 
@@ -566,7 +556,7 @@ Verify that the output contains:
 
 # 14. Test HLS Playback
 
-Before calling the backend manual verification endpoint, test the uploaded video through the normal veoLMS playback delivery path.
+Before calling the backend manual verification endpoint, test the uploaded video through the normal SastaLMS playback delivery path.
 
 Confirm:
 
@@ -586,7 +576,7 @@ Fix the upload or processing problem first.
 
 # 15. Call the Manual Verification Endpoint
 
-After successful playback testing, use the veoLMS frontend manual verification action.
+After successful playback testing, use the SastaLMS frontend manual verification action.
 
 The backend performs the authoritative verification.
 
@@ -594,31 +584,27 @@ The backend checks:
 
 1. Authentication.
 
-2. ADMIN or CREATOR authorization.
+2. The Media belongs to the manual ingestion flow.
 
-3. Creator ownership where required.
+3. The master playlist exists.
 
-4. The Media belongs to the manual ingestion flow.
+4. The 360p playlist exists.
 
-5. The master playlist exists.
+5. The 720p playlist exists.
 
-6. The 360p playlist exists.
+6. Variant playlists contain segments.
 
-7. The 720p playlist exists.
+7. Referenced segments exist in B2.
 
-8. Variant playlists contain segments.
+8. Playlist references are safe (rejects external, absolute, or traversing paths).
 
-9. Referenced segments exist in B2.
+9. Playlist MIME types are correct.
 
-10. Playlist references are safe.
+10. Segment MIME types are correct.
 
-11. Playlist MIME types are correct.
+11. Total B2 media folder size is calculated.
 
-12. Segment MIME types are correct.
-
-13. Total B2 media folder size.
-
-14. HLS duration from playlist `EXTINF` values.
+12. HLS duration is parsed from playlist `EXTINF` values.
 
 Only after every verification step succeeds does the backend update the Media document and mark the media READY.
 
