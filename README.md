@@ -6,28 +6,69 @@ Built with React, Express, MongoDB, AWS MediaConvert, Backblaze B2, and Cloudfla
 
 ---
 
-## Live Application
+## Live Application & Repositories
 
-- **Frontend:** [https://sastalms.sbs](https://sastalms.sbs)
-- **Backend API:** [https://api.sastalms.sbs](https://api.sastalms.sbs)
+- **Frontend Application:** [https://sastalms.sbs](https://sastalms.sbs) (Repository: [sastaLMS-frontend-react](https://github.com/joydipbag27/sastaLMS-frontend-react))
+- **Backend API:** [https://api.sastalms.sbs](https://api.sastalms.sbs) (Repository: [sastaLMS-backend](https://github.com/joydipbag27/sastaLMS-backend))
 
 ---
 
 ## Screenshots
 
-<!--
-TODO: Replace with actual screenshots before submission.
+### 🖥️ Student Experience
 
-Recommended screenshots:
-- `docs/screenshots/landing.png` — Home/landing page
-- `docs/screenshots/courses.png` — Course catalog / course details page
-- `docs/screenshots/creator-dashboard.png` — Creator course management
-- `docs/screenshots/course-manager.png` — Course editor (sections, lessons)
-- `docs/screenshots/classroom.png` — Learning interface / video player
-- `docs/screenshots/users.png` — User management panel
--->
+#### Landing Page
+Beautiful, modern hero section welcoming learners.
+![Landing Hero](docs/sastalms-visuals/landing-hero.png)
 
-> Screenshots are not yet included. See the TODO list above for recommended captures.
+---
+
+#### Course Catalog & Course Details
+Browse structured course cards and explore section lists, course syllabus, and pricing.
+<p align="center">
+  <img src="docs/sastalms-visuals/courses-page.png" width="49%" alt="Course Catalog" />
+  <img src="docs/sastalms-visuals/course-detail.png" width="49%" alt="Course Detail" />
+</p>
+
+---
+
+#### Learning Interface & Video Player
+Adaptive HLS video player with quality switching, sidebar navigation, and progress persistence.
+![Video Player](docs/sastalms-visuals/video-player.png)
+
+---
+
+### 🛠️ Creator Dashboard
+
+#### Course Management
+Comprehensive control center for creators to manage sections, lessons, and course publication.
+![Course Management](docs/sastalms-visuals/course-management.png)
+
+---
+
+#### Analytics & Payments
+Track successful payments, view course performance, and monitor revenue in real time.
+![Track Payments](docs/sastalms-visuals/track-payments.png)
+
+---
+
+#### User Management
+Detailed administration panel to promote users, manage active sessions, block/unblock, and delete accounts.
+![User Management](docs/sastalms-visuals/user-management.png)
+
+---
+
+### ⚙️ User Settings & API Docs
+
+#### Profile & Settings
+Customize student and creator profiles.
+![Profile Settings](docs/sastalms-visuals/basic-profile-settings.png)
+
+---
+
+#### Interactive API Documentation
+Rich documentation layout for developers and admins.
+![Documentation Page](docs/sastalms-visuals/documentation-page.png)
 
 ---
 
@@ -167,9 +208,9 @@ The frontend communicates with the Express API (deployed on AWS Lambda via Serve
 11. On partial transfer failure (some objects missing in B2), the `Media` status is set to `COPY_PENDING` with a failed-upload log. A repair endpoint (`POST /media/:id/retry-transfer`) allows targeted retry of only the missing objects.
 12. Video playback requests are authorized by the backend via HMAC-signed tokens. The Cloudflare Worker verifies the token, rewrites HLS manifest URLs with the active token, and caches `.ts` segments at the edge.
 
-For detailed architecture, see [`Media_Pipeline_Architecture.md`](Backend/Media_Pipeline_Architecture.md).
+For detailed architecture, see [`Media_Pipeline_Architecture.md`](docs/Media_Pipeline_Architecture.md).
 
-For the manual (offline) ingestion workflow, see [`Manual_Media_Pipeline_Guide.md`](Backend/Manual_Media_Pipeline_Guide.md).
+For the manual (offline) ingestion workflow, see [`Manual_Media_Pipeline_Guide.md`](docs/Manual_Media_Pipeline_Guide.md).
 
 ---
 
@@ -211,7 +252,7 @@ The application does not have an `ADMIN` role. All management and analytics oper
 
 ```
 SastaLMS/
-├── Frontend/                     # React + Vite SPA
+├── Frontend/                     # React + Vite SPA (https://github.com/joydipbag27/sastaLMS-frontend-react)
 │   ├── src/
 │   │   ├── app/                  # Layouts, route guards, providers
 │   │   ├── features/             # Auth, courses, learning, media, account
@@ -221,27 +262,28 @@ SastaLMS/
 │   ├── index.html
 │   └── package.json
 │
-├── Backend/                      # Express API (Node.js ESM)
-│   ├── Controllers/              # Route handlers (auth, course, lesson, media, payment, etc.)
-│   ├── Models/                   # Mongoose schemas (User, Course, Section, Lesson, Media, etc.)
-│   ├── Routes/                   # Express route definitions
-│   ├── middlewares/              # authenticate, optionalAuthenticate, authorize, lessonAccess, rateLimit
-│   ├── services/                 # MediaConvert, rclone transfer, B2, playback tokens, durations
-│   ├── config/                   # DB, Redis, S3 clients, roles
-│   ├── lambda/                   # MediaConvert callback handler
-│   ├── validators/               # Zod schemas
-│   ├── cloudflare/b2-worker/     # Cloudflare Worker for media delivery
-│   ├── scripts/                  # Utility scripts (backfill, promote)
-│   ├── app.js                    # Express app entry point
-│   ├── server.js                 # Local development entry point
-│   ├── lambda.js                 # Serverless Framework Lambda handler wrapper
-│   ├── serverless.yml            # AWS deployment configuration
-│   └── .env.example              # Environment variable template
-│
-├── README.md
-├── backend_overview.md
-├── Media_Pipeline_Architecture.md
-└── Manual_Media_Pipeline_Guide.md
+└── Backend/                      # Express API (Node.js ESM) (https://github.com/joydipbag27/sastaLMS-backend)
+    ├── Controllers/              # Route handlers (auth, course, lesson, media, payment, etc.)
+    ├── Models/                   # Mongoose schemas (User, Course, Section, Lesson, Media, etc.)
+    ├── Routes/                   # Express route definitions
+    ├── middlewares/              # Rate limits and auth/role route guards
+    ├── services/                 # MediaConvert, rclone, B2, playback tokens, durations
+    ├── config/                   # MongoDB, Redis, S3 clients, role metadata
+    ├── lambda/                   # MediaConvert callback handler
+    ├── validators/               # Zod schemas
+    ├── docs/                     # Documentation and assets
+    │   ├── backend_overview.md   # API and backend design docs
+    │   ├── Media_Pipeline_Architecture.md # Adaptive streaming architecture
+    │   ├── Manual_Media_Pipeline_Guide.md # CLI-based backup ingestion guide
+    │   └── sastalms-visuals/     # Application screenshots
+    ├── cloudflare/b2-worker/     # Cloudflare Worker for edge delivery and playback tokens
+    ├── scripts/                  # DB utilities and user promotions
+    ├── app.js                    # App initialization
+    ├── server.js                 # Local development runner
+    ├── lambda.js                 # AWS Lambda entry wrapper
+    ├── serverless.yml            # AWS Serverless config
+    ├── .env.example              # Env variable guide
+    └── README.md                 # Project README (this file)
 ```
 
 ---
@@ -317,7 +359,7 @@ npm run build     # Produces optimized output in Frontend/dist/
 
 ## Environment Variables
 
-The backend uses approximately 30 environment variables. See [`Backend/.env.example`](Backend/.env.example) for the complete reference with documentation.
+The backend uses approximately 30 environment variables. See [`.env.example`](.env.example) for the complete reference with documentation.
 
 Key variable groups:
 
@@ -360,7 +402,7 @@ The backend exposes routes under the following prefixes:
 | `/payment` | Razorpay order creation and webhook |
 | `/learning` | Classroom section data and course progress summaries |
 
-See [`Backend/backend_overview.md`](Backend/backend_overview.md) for the complete route reference with authentication requirements.
+See [`backend_overview.md`](docs/backend_overview.md) for the complete route reference with authentication requirements.
 
 ---
 
@@ -368,9 +410,9 @@ See [`Backend/backend_overview.md`](Backend/backend_overview.md) for the complet
 
 | Document | Purpose |
 |---|---|
-| [`backend_overview.md`](Backend/backend_overview.md) | Backend architecture, data models, middleware, API routes, and core workflows |
-| [`Media_Pipeline_Architecture.md`](Backend/Media_Pipeline_Architecture.md) | Technical architecture of the video processing and delivery pipeline |
-| [`Manual_Media_Pipeline_Guide.md`](Backend/Manual_Media_Pipeline_Guide.md) | Step-by-step guide for the offline FFmpeg + rclone ingestion workflow |
+| [`backend_overview.md`](docs/backend_overview.md) | Backend architecture, data models, middleware, API routes, and core workflows |
+| [`Media_Pipeline_Architecture.md`](docs/Media_Pipeline_Architecture.md) | Technical architecture of the video processing and delivery pipeline |
+| [`Manual_Media_Pipeline_Guide.md`](docs/Manual_Media_Pipeline_Guide.md) | Step-by-step guide for the offline FFmpeg + rclone ingestion workflow |
 
 ---
 
