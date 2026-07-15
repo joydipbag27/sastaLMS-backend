@@ -3,28 +3,88 @@ import { Resend } from "resend";
 const resend = new Resend(process.env.RESEND_KEY);
 
 const buildTemplate = (title, description, otp) => `
-  <div style="font-family:Arial, sans-serif; padding:20px; background:#f3f4f6;">
-    <div style="max-width:460px; margin:auto; background:#ffffff; padding:24px; border-radius:10px;">
-      <h2 style="text-align:center; color:#111827;">${title}</h2>
-      <p style="text-align:center; font-size:14px; color:#6b7280;">
+  <div style="
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 40px 20px;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    min-height: 100%;
+  ">
+    <div style="
+      max-width: 480px;
+      margin: auto;
+      background: #ffffff;
+      padding: 36px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+      border: 1px solid #edf2f7;
+    ">
+      <div style="text-align: center; margin-bottom: 24px;">
+        <span style="
+          font-size: 24px;
+          font-weight: 800;
+          background: linear-gradient(to right, #4f46e5, #7c3aed);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          letter-spacing: -0.5px;
+        ">
+          SastaLMS
+        </span>
+      </div>
+      
+      <h2 style="
+        text-align: center;
+        color: #1e293b;
+        font-size: 20px;
+        font-weight: 700;
+        margin-top: 0;
+        margin-bottom: 8px;
+      ">
+        ${title}
+      </h2>
+      
+      <p style="
+        text-align: center;
+        font-size: 14px;
+        color: #64748b;
+        line-height: 1.5;
+        margin-bottom: 24px;
+      ">
         ${description}
       </p>
+      
       <div style="
-        background:#111827;
-        color:#ffffff;
-        padding:14px;
-        text-align:center;
-        margin:20px 0;
-        border-radius:8px;
-        font-size:28px;
-        font-weight:bold;
-        letter-spacing:6px;
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+        color: #ffffff;
+        padding: 16px;
+        text-align: center;
+        margin: 24px 0;
+        border-radius: 12px;
+        font-size: 32px;
+        font-weight: 800;
+        letter-spacing: 8px;
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
       ">
         ${otp}
       </div>
-      <p style="font-size:13px; text-align:center;">
-        OTP valid for 10 minutes
+      
+      <p style="
+        font-size: 12px;
+        text-align: center;
+        color: #94a3b8;
+        margin-bottom: 0;
+      ">
+        This OTP is temporary and valid for <strong>10 minutes</strong>.<br>
+        If you did not request this code, please ignore this email.
       </p>
+    </div>
+    
+    <div style="
+      text-align: center;
+      margin-top: 24px;
+      font-size: 12px;
+      color: #94a3b8;
+    ">
+      © ${new Date().getFullYear()} SastaLMS. All rights reserved.
     </div>
   </div>
 `;
@@ -69,7 +129,7 @@ export const sendEmail = async (email, purpose, otp) => {
 
   try {
     const { data, error } = await resend.emails.send({
-      from: "Sasta Drive <otp@upisathi.in>",
+      from: "SastaLMS <otp@sastalms.sbs>",
       to: email,
       subject: subject,
       html: buildTemplate(title, description, otp),
